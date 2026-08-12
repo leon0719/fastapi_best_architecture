@@ -1,0 +1,18 @@
+[extend]
+useDefault = true
+
+[[rules]]
+id = "dotenv-file-committed"
+description = "「.env 檔本身進版控」—— 這正是 2026-07 事故的成因"
+
+path = '''(^|/)\.env(\.[^/]*)?$'''
+# 排除範本檔:.env.example / .env.prod.example 本來就該進版控。
+[rules.allowlist]
+paths = ['''(^|/)\.env\.[^/]*example$''']
+
+[allowlist]
+description = "已知且已處理的例外"
+
+# 範本檔內的 CHANGEME-* 是刻意留下的 placeholder,不是機密。
+paths = ['''(^|/)\.env\.[^/]*example$''']
+regexes = ['''CHANGEME-[A-Za-z0-9._-]*''']

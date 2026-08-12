@@ -1,0 +1,30 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Environment files — 只有 *.example 版本進版控。
+# (2026-07 以前 .env / .env.local / .env.prod 曾被誤 commit 進公開 repo,
+#  詳見 docs/security-incident-2026-07.md)
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Database files
+data/
+*.db
+*.db-journal
+
+# Log files
+logs/
+*.log
+# Coverage
+.coverage
+htmlcov/

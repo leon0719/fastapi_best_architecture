@@ -1,0 +1,201 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+# 最小權限:預設唯讀,需要更多的 step 自行 opt-in。
+permissions:
+  contents: read
+
+# 同一個 ref 有新 push 時取消舊的 run,省 runner。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Format check
+        run: uv run ruff format --check .
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Type check
+        run: uv run mypy .
+
+      # 覆蓋率門檻刻意設在略低於現況(59%)的位置,讓它擋住「新程式碼完全沒測試」
+      # 而不是一啟用就紅。補完測試後往上調。
+      - name: Tests
+        run: uv run pytest --cov=app --cov-report=term-missing --cov-fail-under=55
+
+  # 對真實 Postgres + Redis 跑,並驗證 alembic migration 真的套得上去 ——
+  # autogenerate 出來的 migration 沒跑過就 merge 是最常見的上線爆炸點。
+  tests-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+          POSTGRES_DB: app
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U app -d app"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DEBUG: "true"
+      DB_HOST: localhost
+      DB_PORT: "5432"
+      DB_USER: app
+      DB_PASSWORD: app
+      DB_NAME: app
+      REDIS_HOST: localhost
+      REDIS_PORT: "6379"
+      # compose 的 redis 有 requirepass,CI 這台沒有 → 留空字串連線。
+      REDIS_PASSWORD: ""
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Alembic migrations apply cleanly
+        run: uv run alembic upgrade head
+
+      - name: Migrations match models (no un-generated changes)
+        # autogenerate 若還產得出東西,代表有人改了 model 卻沒建 migration。
+        run: |
+          uv run alembic revision --autogenerate -m ci-drift-check --rev-id ci_drift_check
+          generated="alembic/versions/ci_drift_check_ci_drift_check.py"
+          if [ ! -f "$generated" ]; then
+            generated="$(ls alembic/versions/ci_drift_check*.py 2>/dev/null | head -1)"
+          fi
+          if grep -qE '^\s+op\.' "$generated"; then
+            echo "偵測到 model 與 migration 不同步,以下是遺漏的變更:"
+            cat "$generated"
+            exit 1
+          fi
+          echo "migration 與 model 一致"
+          rm -f "$generated"
+
+      - name: Tests
+        run: uv run pytest
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      # 掃 uv.lock 鎖定的那組依賴,而非 pyproject 的版本範圍。
+      - name: Export locked requirements
+        run: uv export --frozen --no-dev --no-emit-project --format requirements-txt -o requirements-audit.txt
+
+      - name: pip-audit
+        run: uvx pip-audit --disable-pip -r requirements-audit.txt
+
+  # 2026-07 的 .env 外洩(見 docs/security-incident-2026-07.md)靠人工 review 沒攔下來。
+  # gitleaks 掃「工作目錄 + 完整 git 歷史」,是那次事故對應的自動化防線。
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # gitleaks 要掃歷史,不能用 shallow clone
+
+      - name: gitleaks
+        run: |
+          docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:latest \
+            detect --source /repo --config /repo/.gitleaks.toml \
+            --redact --verbose --exit-code 1
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          tags: app:ci
+          push: false
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # 只擋「有修法可套用」的 CRITICAL,避免上游還沒修的 CVE 卡死所有建置。
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: app:ci
+          format: table
+          severity: CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+
+      # 用 DEBUG=false 起,順便驗證 enforce_secure_settings() 在填妥機密時放行。
+      # 不連 DB/Redis:/health/live 是純程序層級的檢查。
+      - name: Smoke test /health/live
+        run: |
+          docker run -d --name smoke -p 8000:8000 \
+            -e DEBUG=false \
+            -e ADMIN_SECRET_KEY="ci-smoke-only-not-a-real-secret-0123456789abcdef" \
+            -e ADMIN_USERNAME="ci-admin" \
+            -e ADMIN_PASSWORD="ci-smoke-only-password" \
+            -e DB_PASSWORD="ci-smoke-only-db-password" \
+            -e REDIS_PASSWORD="ci-smoke-only-redis-password" \
+            app:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/health/live; then
+              echo "smoke test passed"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "smoke test FAILED — container logs:"
+          docker logs smoke
+          exit 1
+
+      - name: Dump container logs on failure
+        if: failure()
+        run: docker logs smoke || true
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f smoke || true

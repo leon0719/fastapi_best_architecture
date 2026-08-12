@@ -1,0 +1,93 @@
+[project]
+name = "fastapi-best-architecture"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.118.2",
+    "httpx>=0.28.1",
+    "loguru>=0.7.3",
+    "pydantic-settings>=2.11.0",
+    "python-dotenv>=1.1.1",
+    "sqlalchemy>=2.0.43",
+    "sqladmin>=0.21.0",
+    "aiofiles>=25.1.0",
+    "python-multipart>=0.0.20",
+    "itsdangerous>=2.2.0",
+    "psycopg[binary]>=3.2.10",
+    "redis[hiredis]>=6.4.0",
+    "alembic>=1.17.0",
+    "backoff>=2.2.1",
+    "uvicorn[standard]>=0.37.0",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=2.3.0",
+    "pytest>=8.4.2",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.14.0",
+    "vulture>=2.16",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "app"]
+python_files = ["test_*.py"]
+addopts = "--strict-markers -q"
+markers = [
+    "unit: 不需外部服務的單元測試",
+    "integration: 需要 DB/Redis 的整合測試",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "SIM", # flake8-simplify
+    "T20", # no print statements (use loguru)
+    "DTZ", # timezone-aware datetimes
+    "S",   # flake8-bandit (security)
+    "BLE", # flake8-blind-except (no bare except)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"app/*/tests/*" = ["DTZ", "S101", "S105", "S106"]
+"tests/*" = ["DTZ", "S101", "S105", "S106"]
+"alembic/*" = ["I"]
+# AppException 是文件化的公開 API 名稱(CLAUDE.md),不因 N818 改名為 *Error
+"app/common/exceptions/__init__.py" = ["N818"]
+# views.py 是邊界層,可 catch-all 轉 500 + log(見 CLAUDE.md Exception Handling)
+"app/*/views.py" = ["BLE001"]
+# Redis cache 層失敗需 fallback(見 CLAUDE.md Redis Caching),不可讓例外往上炸
+"app/common/core/redis.py" = ["BLE001"]
+# 啟動時的 Redis 健康檢查失敗只記錄+降級,不影響啟動
+"app/main.py" = ["BLE001"]
+# dev 預設值(compose 內建密碼)與 session token 比對字串,非硬編機密外洩
+"app/common/core/config.py" = ["S105"]
+"app/common/core/admin.py" = ["S105"]
+
+[tool.mypy]
+python_version = "3.12"
+explicit_package_bases = true
+check_untyped_defs = true
+warn_unused_ignores = true
+strict_equality = true
+exclude = ["alembic/versions"]
+ignore_missing_imports = true
+
+[tool.vulture]
+paths = ["app"]
+min_confidence = 80
+exclude = ["*/tests/*"]

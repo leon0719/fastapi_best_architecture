@@ -1,0 +1,37 @@
+# 安裝:  uv run pre-commit install
+# 全檔掃一次:  uv run pre-commit run --all-files
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.0
+    hooks:
+      - id: ruff-format
+      - id: ruff
+        args: [--fix]
+
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        entry: uv run mypy .
+        language: system
+        types: [python]
+        pass_filenames: false
+
+  # 機密外洩的第一道防線 —— commit 前就擋,不必等到推上去才發現。
+  # 設定(含已知歷史例外)在 .gitleaks.toml,與 CI 的 secrets job 共用同一份。
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+        args: [--config, .gitleaks.toml]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      - id: detect-private-key
