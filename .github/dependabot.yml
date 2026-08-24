@@ -1,0 +1,39 @@
+version: 2
+updates:
+  # Python dependencies via uv (Dependabot supports the uv ecosystem, which reads
+  # pyproject.toml + uv.lock). Falls back to "pip" only if uv support is removed.
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      python-dependencies:
+        patterns:
+          - "*"
+
+  # GitHub Actions used in .github/workflows/*.yml.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  # Base image in ./Dockerfile.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+
+  # Images referenced in docker-compose*.yml (e.g. postgres, redis) — the
+  # "docker" ecosystem above only scans the Dockerfile, not compose files.
+  - package-ecosystem: "docker-compose"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10

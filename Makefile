@@ -1,4 +1,4 @@
-.PHONY: help install update all format lint type-check test coverage clean audit secrets-scan
+.PHONY: help install update all format lint type-check test coverage clean audit secrets-scan sast
 .PHONY: up down build rebuild logs logs-app logs-db logs-redis db-up docker-clean
 .PHONY: prod-up prod-down prod-build prod-logs
 .PHONY: migrate makemigrations downgrade migration-history
@@ -52,6 +52,7 @@ help:
 	@echo "安全性 (對等 CI):"
 	@echo "  make secrets-scan      - gitleaks 掃描機密外洩 (工作目錄 + git 歷史)"
 	@echo "  make audit             - 掃描鎖定依賴的已知漏洞 (pip-audit)"
+	@echo "  make sast              - 靜態掃描程式碼安全弱點 (bandit)"
 	@echo ""
 	@echo "其他:"
 	@echo "  make install           - 安裝本地依賴"
@@ -210,6 +211,11 @@ audit:
 	@echo "Auditing locked dependencies for known vulnerabilities..."
 	@uv export --frozen --no-dev --no-emit-project --format requirements-txt -o requirements-audit.txt
 	@uvx pip-audit --disable-pip -r requirements-audit.txt; status=$$?; rm -f requirements-audit.txt; exit $$status
+
+# 與 CI 的 sast job 等價:靜態掃程式碼常見弱點模式(SQL/命令注入、硬編碼密碼等)。
+sast:
+	@echo "Running static analysis for security issues (bandit)..."
+	@uvx bandit -r app -ll
 
 # ===================
 # Cleanup

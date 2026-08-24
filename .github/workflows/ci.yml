@@ -127,6 +127,20 @@ jobs:
       - name: pip-audit
         run: uvx pip-audit --disable-pip -r requirements-audit.txt
 
+  # 靜態掃描程式碼本身的常見弱點模式(SQL/命令注入、硬編碼密碼、不安全的 deserialize 等),
+  # 跟 pip-audit(掃第三方套件已知 CVE)、gitleaks(掃機密字串)是互補的三層防線。
+  sast:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: bandit
+        run: uvx bandit -r app -ll
+
   # 2026-07 的 .env 外洩(見 docs/security-incident-2026-07.md)靠人工 review 沒攔下來。
   # gitleaks 掃「工作目錄 + 完整 git 歷史」,是那次事故對應的自動化防線。
   secrets:

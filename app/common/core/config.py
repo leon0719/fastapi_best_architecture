@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # ENV 決定要載入哪個 .env 檔:local -> .env.local, prod -> .env.prod。
 # 未設定時預設 local,所以本地開發不用特別 export;Docker compose 用 env_file
 # 明確指定該環境的檔案,process 環境不會有 ENV,故仍以此變數的預設值為準。
-_env = os.getenv("ENV", "local")
+_env = os.environ.get("ENV", "local")
 _env_file = f".env.{_env}"
 
 _PLACEHOLDER_MARKERS = ("changeme", "your-", "change-in-production")
