@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, String, Text
+from sqlalchemy import Boolean, DateTime, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -19,11 +19,8 @@ class Chatbot(Base):
     description: Mapped[str] = mapped_column(Text, nullable=True)
     system_prompt: Mapped[str] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now(), nullable=False)
-
-    class Meta:
-        """Model metadata."""
-
-        indexes = [("name",), ("is_active",)]
-        ordering = ["-created_at"]
+    # timezone=True → Postgres timestamptz,時間一律以 UTC 儲存。
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )

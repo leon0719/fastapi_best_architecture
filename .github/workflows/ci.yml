@@ -36,10 +36,10 @@ jobs:
       - name: Type check
         run: uv run mypy .
 
-      # 覆蓋率門檻刻意設在略低於現況(59%)的位置,讓它擋住「新程式碼完全沒測試」
+      # 覆蓋率門檻刻意設在略低於現況(76%)的位置,讓它擋住「新程式碼完全沒測試」
       # 而不是一啟用就紅。補完測試後往上調。
       - name: Tests
-        run: uv run pytest --cov=app --cov-report=term-missing --cov-fail-under=55
+        run: uv run pytest --cov=app --cov-report=term-missing --cov-fail-under=70
 
   # 對真實 Postgres + Redis 跑,並驗證 alembic migration 真的套得上去 ——
   # autogenerate 出來的 migration 沒跑過就 merge 是最常見的上線爆炸點。

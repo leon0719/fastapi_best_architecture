@@ -184,7 +184,7 @@ lint:
 
 type-check:
 	@echo "Running type checks with mypy..."
-	@uv run mypy app
+	@uv run mypy .
 
 test:
 	@echo "Running tests..."

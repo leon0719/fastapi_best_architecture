@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.common.db.database import get_db
+from app.common.schemas import BaseResponse
 from app.users.schemas import UserCreate, UserRead, UserUpdate
 from app.users.services import UserService
 
@@ -17,7 +18,7 @@ def get_user_service(db: Annotated[Session, Depends(get_db)]) -> UserService:
     return UserService(db)
 
 
-@router.get("", response_model=list[UserRead])
+@router.get("", response_model=BaseResponse[list[UserRead]])
 def list_users(
     service: Annotated[UserService, Depends(get_user_service)],
     skip: Annotated[int, Query(ge=0, description="Number of records to skip")] = 0,
@@ -34,10 +35,10 @@ def list_users(
     Returns:
         List of users
     """
-    return service.list_users(skip=skip, limit=limit)
+    return BaseResponse(data=service.list_users(skip=skip, limit=limit))
 
 
-@router.post("", response_model=UserRead, status_code=201)
+@router.post("", response_model=BaseResponse[UserRead], status_code=201)
 def create_user(
     user: UserCreate,
     service: Annotated[UserService, Depends(get_user_service)],
@@ -53,12 +54,12 @@ def create_user(
         Created user
 
     Raises:
-        ValidationException: If validation fails (duplicate name)
+        ConflictException: If the name is already taken
     """
-    return service.create_user(user)
+    return BaseResponse(data=service.create_user(user))
 
 
-@router.get("/{user_id}", response_model=UserRead)
+@router.get("/{user_id}", response_model=BaseResponse[UserRead])
 def get_user(
     user_id: int,
     service: Annotated[UserService, Depends(get_user_service)],
@@ -76,10 +77,10 @@ def get_user(
     Raises:
         NotFoundException: If user not found
     """
-    return service.get_user(user_id)
+    return BaseResponse(data=service.get_user(user_id))
 
 
-@router.put("/{user_id}", response_model=UserRead)
+@router.put("/{user_id}", response_model=BaseResponse[UserRead])
 def update_user(
     user_id: int,
     user: UserUpdate,
@@ -98,12 +99,12 @@ def update_user(
 
     Raises:
         NotFoundException: If user not found
-        ValidationException: If validation fails
+        ConflictException: If the name is already taken
     """
-    return service.update_user(user_id, user)
+    return BaseResponse(data=service.update_user(user_id, user))
 
 
-@router.delete("/{user_id}", status_code=204)
+@router.delete("/{user_id}", response_model=BaseResponse[None])
 def delete_user(
     user_id: int,
     service: Annotated[UserService, Depends(get_user_service)],
@@ -116,9 +117,10 @@ def delete_user(
         service: User service dependency
 
     Returns:
-        None (204 No Content)
+        Empty BaseResponse (data is null)
 
     Raises:
         NotFoundException: If user not found
     """
     service.delete_user(user_id)
+    return BaseResponse()

@@ -28,3 +28,6 @@ logs/
 # Coverage
 .coverage
 htmlcov/
+
+# Claude Code 個人設定(專案共用的是 .claude/settings.json)
+.claude/settings.local.json

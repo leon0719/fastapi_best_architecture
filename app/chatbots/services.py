@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.chatbots.models import Chatbot
 from app.chatbots.schemas import ChatbotCreate, ChatbotUpdate
-from app.common.exceptions import NotFoundException, ValidationException
+from app.common.exceptions import ConflictException, NotFoundException
 
 
 class ChatbotService:
@@ -16,7 +16,7 @@ class ChatbotService:
 
     def list_chatbots(self, skip: int = 0, limit: int = 100) -> list[Chatbot]:
         logger.debug(f"[Service] Listing chatbots - skip: {skip}, limit: {limit}")
-        chatbots = self.db.query(Chatbot).offset(skip).limit(limit).all()
+        chatbots = self.db.query(Chatbot).order_by(Chatbot.id.desc()).offset(skip).limit(limit).all()
         logger.info(f"[Service] Retrieved {len(chatbots)} chatbots")
         return chatbots
 
@@ -31,7 +31,7 @@ class ChatbotService:
         logger.info(f"[Service] Creating chatbot - name: {data.name}")
         existing = self.db.query(Chatbot).filter(Chatbot.name == data.name).first()
         if existing:
-            raise ValidationException(f"Chatbot with name '{data.name}' already exists")
+            raise ConflictException(f"Chatbot with name '{data.name}' already exists")
 
         chatbot = Chatbot(
             name=data.name,
@@ -46,7 +46,10 @@ class ChatbotService:
 
     def update_chatbot(self, chatbot_id: int, data: ChatbotUpdate) -> Chatbot:
         chatbot = self.get_chatbot(chatbot_id)
-        if data.name:
+        if data.name is not None:
+            existing = self.db.query(Chatbot).filter(Chatbot.name == data.name, Chatbot.id != chatbot_id).first()
+            if existing:
+                raise ConflictException(f"Chatbot with name '{data.name}' already exists")
             chatbot.name = data.name
         if data.description is not None:
             chatbot.description = data.description

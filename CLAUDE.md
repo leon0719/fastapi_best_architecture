@@ -1,403 +1,123 @@
 # CLAUDE.md
 
-## Project Overview
+本檔只列**每種任務都會踩到的硬規則**。特定任務的流程與模板在 `.claude/skills/` 與 `docs/`——
+動手前先讀指向的檔案，不要憑記憶寫。
 
-FastAPI best architecture using Python 3.13 + uv. **Django-style app structure** - each feature is a self-contained app with models, schemas, services, and views.
+## 回應語言
 
-## Package Management & Commands
+**一律使用繁體中文，採台灣本地化用語**——用 程式碼／資料／函式／物件／介面／型別／快取／預設／效能，
+不用 代碼／數據／函數／對象／接口／類型／緩存／默認／性能。即使以英文提問，回應仍用繁體中文。
+程式碼識別字、檔名、目錄名、套件名保持英文不翻譯。
 
-**uv** (not pip/poetry) for all dependencies. **Development runs in Docker** (hot-reload enabled).
+## 專案概要
 
-**Makefile** wraps all common commands — run `make help` for the full list:
+FastAPI + SQLAlchemy 2.0（sync）+ Alembic + PostgreSQL + Redis + SQLAdmin，Python 3.13，套件管理用 `uv`（不用 pip／poetry）。
+**Django-style app**：每個功能是一個自足的 `app/<name>/`。開發環境跑在 Docker（hot-reload）。
 
-```bash
-make up          # Start dev containers (hot-reload)
-make db-up       # Start DB + Redis only (for local app / alembic)
-make migrate     # alembic upgrade head
-make makemigrations MSG="Add email to users"
-make all         # format + lint + type-check + test
-make test        # uv run pytest (TEST="path" to filter)
-make coverage    # Tests with coverage report (htmlcov/)
+## 指令（`make help` 看全部）
+
+- `make up` / `make down` / `make rebuild`（改 Dockerfile 或依賴後）/ `make logs-app`
+- `make test` — 本機直接跑，**不需要 Docker**（in-memory SQLite）；`make test TEST=app/users/tests/test_views.py` 跑單檔
+- `make all` — format + lint + type-check + test
+- `make migrate` / `make makemigrations MSG="Add email to users"` — 在 app 容器內執行，需先 `make up` 且有 `.env.local`
+- `make secrets-scan` / `make audit` / `make sast` — 與 CI 的安全檢查相同
+- 加依賴：`uv add <pkg>` / `uv add --dev <pkg>`
+
+## ⛔ 只能由人執行
+
+不要自己執行——停下來，把完整指令交給使用者：
+- 任何碰 prod 的操作：`make prod-*`、`docker-compose.yml`（prod compose）、連線到 prod DB／Redis
+- `git push`（任何分支）、force-push、改寫已推送的歷史
+- `make docker-clean`（清空本機 DB volume）
+- 刪除或修改可能已在任何環境套用的 migration
+- 呼叫真實的第三方 API／webhook、寄出真實 email
+
+## 架構
+
+```
+Client → RequestLoggingMiddleware → router (app/<name>/views.py) → services.py → SQLAlchemy Session → PostgreSQL
+                                          └─ 任何例外 → app/common/middleware/error_handler.py → BaseResponse
 ```
 
-Raw equivalents:
+### 各檔職責
 
-```bash
-# Dependencies
-uv add <package>              # Runtime dependency
-uv add --dev <package>        # Dev dependency
+- **views.py** — 只做 HTTP：取依賴、呼叫 service、`return BaseResponse(data=...)`。不寫 ORM、不寫業務邏輯、不寫 try/except。
+- **schemas.py** — Pydantic 請求／回應：`XxxCreate` / `XxxUpdate` / `XxxRead`（`from_attributes=True`）。
+- **services.py** — 業務邏輯，`XxxService(db)`；commit／rollback 在這層；失敗一律 raise `AppException` 子類別。
+- **models.py** — SQLAlchemy 2.0 `Mapped[...]`。**不要寫 `class Meta`**——那是 Django 寫法，SQLAlchemy 會直接忽略：
+  index 用 `mapped_column(index=True)` 或 `__table_args__`，排序寫在查詢的 `order_by()`。
+- **admin.py** — SQLAdmin `ModelView`；每個 model 都要註冊。
+- **external_services.py** — 第三方 HTTP 呼叫**唯一**能放的地方（ruff `TID251` 強制）。需要時才建立。
+- **utils.py** — 純函式，不碰 DB 與外部 API。需要時才建立。
+- **tests/** — `test_services.py`（每條業務規則、每個例外分支）＋ `test_views.py`（狀態碼與回應 body）。
 
-# Docker Development
-docker compose -f docker-compose-dev.yml up -d --build  # Start
-docker compose -f docker-compose-dev.yml logs -f        # Logs
-docker compose -f docker-compose-dev.yml down           # Stop
+新 app 或新資源 → **scaffold-app** skill。**參考實作是 `app/users`**——照抄它的形狀，不要另創寫法。
 
-# Testing
-uv run pytest                 # All tests
-uv run pytest --cov=app       # With coverage
+### 回應格式（團隊契約，與 .NET 後端、前端 `axiosService` 相同）
 
-# Database Migrations (local with Docker DB)
-docker compose -f docker-compose-dev.yml up -d db redis  # Start DB only
-uv run alembic revision --autogenerate -m "message"      # Create migration
-uv run alembic upgrade head                              # Apply migrations
+```
+成功 {"data": <T>, "error": null}
+失敗 {"data": null, "error": {"code": <HTTP 狀態碼>, "message": "..."}}
 ```
 
-## Architecture & Rules
-
-**Django-Style App Structure:**
-```
-app/
-├── main.py                  # FastAPI entry point
-├── common/                  # Shared modules (all apps)
-│   ├── core/                # Core configuration
-│   │   ├── config.py        # Environment variables
-│   │   ├── log_config.py    # Loguru logging
-│   │   ├── redis.py         # Redis connection
-│   │   └── admin.py         # Admin panel setup
-│   ├── db/                  # Database
-│   │   ├── database.py      # SQLAlchemy engine/session
-│   ├── middleware/          # Middleware
-│   │   ├── error_handler.py     # Global error handling
-│   │   └── request_logging.py   # Request logging
-│   └── exceptions/          # Custom exceptions
-│       └── __init__.py      # AppException base class
-├── users/                   # User app (self-contained)
-│   ├── models.py            # ORM models
-│   ├── schemas.py           # Pydantic request/response
-│   ├── services.py          # Business logic
-│   ├── views.py             # API routes
-│   ├── admin.py             # User admin interface
-│   └── tests/               # User tests
-└── chatbots/                # Chatbot app (self-contained)
-    ├── models.py            # ORM models
-    ├── schemas.py           # Pydantic request/response
-    ├── services.py          # Business logic
-    ├── views.py             # API routes
-    ├── admin.py             # Chatbot admin interface
-    ├── external_services.py # Third-party APIs
-    ├── utils.py             # Helper functions
-    └── tests/               # Chatbot tests
-```
-
-**File Responsibilities:**
-- **models.py**: ORM models, validation, Meta config (indexes, ordering)
-- **schemas.py**: Pydantic request/response models
-- **services.py**: Business logic, multi-model operations, call external_services
-- **views.py**: API routes (FBV pattern), auth checks, call services
-- **admin.py**: SQLAdmin ModelView for admin panel interface
-- **external_services.py**: Third-party API integration with error handling (optional)
-- **utils.py**: Pure helper functions (no models/API dependencies) (optional)
-- **tests/**: Model, view, service tests
-
-**Key Rules:**
-1. **Simple Flow**: `views.py` → `services.py` → database (no repository layer)
-2. **Session Management**: Each view gets DB session via `Depends(get_db)`
-3. **Exceptions**: Extend `AppException`, let global handler convert to HTTP responses
-4. **Self-Contained Apps**: Each app is independent with all its files
-
-## Adding New App
-
-**Step-by-Step (e.g., "products"):**
-
-1. **Create app directory:**
-```bash
-mkdir -p app/products/tests
-touch app/products/{__init__,models,schemas,services,views,admin}.py
-```
-
-2. **Create model** (`app/products/models.py`):
-```python
-from sqlalchemy import String
-from sqlalchemy.orm import Mapped, mapped_column
-from app.common.db.database import Base
-
-class Product(Base):
-    __tablename__ = "products"
-    id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(100), index=True)
-```
-
-3. **Create schemas** (`app/products/schemas.py`):
-```python
-from pydantic import BaseModel, ConfigDict
-
-class ProductCreate(BaseModel):
-    name: str
-
-class ProductRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-    id: int
-    name: str
-```
-
-4. **Create service** (`app/products/services.py`):
-```python
-from sqlalchemy.orm import Session
-from app.products.models import Product
-
-class ProductService:
-    def __init__(self, db: Session):
-        self.db = db
-
-    def list_products(self):
-        return self.db.query(Product).all()
-```
-
-5. **Create views** (`app/products/views.py`):
-```python
-from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
-from app.common.db.database import SessionLocal
-from app.products.services import ProductService
-from app.products.schemas import ProductRead
-
-router = APIRouter(prefix="/products", tags=["products"])
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-@router.get("", response_model=list[ProductRead])
-def list_products(db: Session = Depends(get_db)):
-    service = ProductService(db)
-    return service.list_products()
-```
-
-6. **Create admin interface** (`app/products/admin.py`):
-```python
-from sqladmin import ModelView
-from app.products.models import Product
-
-class ProductAdmin(ModelView, model=Product):
-    name = "Product"
-    name_plural = "Products"
-    icon = "fa-solid fa-box"
-    column_list = [Product.id, Product.name]
-    column_searchable_list = [Product.name]
-    can_create = True
-    can_edit = True
-    can_delete = True
-```
-
-7. **Register in main.py:**
-```python
-from app.products import views as product_views
-from app.products.admin import ProductAdmin
-
-app.include_router(product_views.router, prefix="/api/v1")
-admin.add_view(ProductAdmin)  # Add to admin panel
-```
-
-8. **Update alembic/env.py:**
-```python
-from app.products.models import Product  # noqa
-```
-
-9. **Create migration:**
-```bash
-uv run alembic revision --autogenerate -m "Add products"
-uv run alembic upgrade head
-```
-
-**Tech Stack:**
-FastAPI 0.118+, SQLAlchemy 2.0+, Pydantic Settings, Uvicorn, Loguru, PostgreSQL, Redis 7, Alembic, Python 3.13
-
-## Logging Standards
-
-**Setup:** `from loguru import logger`
-**Outputs:** Console (DEBUG+), `logs/app.log` (INFO+, 10MB rotation), `logs/error.log` (ERROR+)
-
-**Configuration:** (`app/common/core/log_config.py`)
-```python
-# SQLAlchemy SQL logging: DISABLED (too verbose)
-# Uvicorn access logs: DISABLED (we use RequestLoggingMiddleware)
-# Application logs: Loguru (colored console + file rotation)
-```
-
-**Log Levels:**
-- `DEBUG`: Query params, cache hits, diagnostic info
-- `INFO`: Operations success, resource creation, counts
-- `WARNING`: Validation failures, slow queries (>1s), deprecated usage
-- `ERROR`: Use `logger.exception()` for automatic stack traces
-
-**Layer Prefixes (mandatory):**
-- `[API]` - Middleware auto-logging (DO NOT use manually)
-- `[Service]` - Business logic layer
-- `[External]` - External API calls
-
-**Required Context in ALL logs:**
-- Resource IDs: `user_id: {user.id}`
-- Counts: `total: {count}`
-- Durations: `duration: {duration:.3f}s`
-
-**Security:**
-❌ NEVER log: passwords, API keys, tokens (unless masked: `token[:10]...`)
-
-**API Layer:** NO manual logging - `RequestLoggingMiddleware` auto-logs all requests
-**Service Layer:** Log entry point, validations (WARNING), success (INFO), errors (exception())
-
-**Example:**
-```python
-# Service layer
-logger.info(f"[Service] Creating user - name: {name}")
-logger.exception(f"[Service] Failed - user_id: {user_id}, error: {e}")
-
-# External services
-logger.info(f"[External] Calling API - endpoint: {url}")
-```
-
-**Troubleshooting:**
-- **Too many SQL logs?** → Already disabled in `log_config.py` (set to WARNING)
-- **Enable SQL debugging:** Change `echo=False` to `echo=True` in `database.py`
-- **Too many Uvicorn logs?** → Already disabled (we use RequestLoggingMiddleware)
-
-## Redis Caching
-
-**Import:** `from app.common.core.redis import RedisCache, cache_result`
-
-**Basic Operations:**
-```python
-cache = RedisCache()
-cache.set("key", "value", expire=300)                    # Set with TTL
-cache.set_json("user:123", {"name": "John"}, expire=60)  # JSON serialize
-value = cache.get("key")                                  # Get
-user = cache.get_json("user:123")                        # JSON deserialize
-cache.delete("key")                                       # Delete
-cache.incr("counter")                                     # Increment
-```
-
-**Cache Decorator:**
-```python
-@cache_result(expire=3600, key_prefix="user")
-def expensive_operation(user_id: int) -> dict:
-    # Cached for 1 hour, key: "user:expensive_operation:{user_id}"
-    return perform_expensive_query(user_id)
-```
-
-**Patterns:**
-1. **Time-based**: `cache.set("key", value, expire=3600)` - Auto-expire after N seconds
-2. **Manual invalidation**: `cache.delete(f"user:{user_id}")` after update/delete
-3. **Cache-aside**: Try cache → if miss, fetch DB → store in cache → return
-
-**Best Practices:**
-- Use hierarchical keys: `user:123:profile`, `product:456:details`
-- Always set expiration (prevent memory leaks)
-- Handle failures gracefully (fallback to DB)
-- Log cache HIT/MISS for monitoring
-
-**Test API:** `/api/v1/cache/test`, `/api/v1/cache/stats`, `/api/v1/cache/decorator-test`
-
-## Database Migrations (Alembic)
-
-**Common Commands:**
-```bash
-# Create migration (auto-detect model changes)
-uv run alembic revision --autogenerate -m "Add email to users"
-
-# Apply migrations
-uv run alembic upgrade head          # Apply all
-uv run alembic upgrade +1            # Apply one
-
-# Rollback
-uv run alembic downgrade -1          # Rollback one
-uv run alembic downgrade base        # Rollback all
-
-# History
-uv run alembic current               # Show current version
-uv run alembic history               # Show all migrations
-```
-
-**Workflow:**
-1. Modify model (e.g., add `email` field to `User`)
-2. Generate: `uv run alembic revision --autogenerate -m "message"`
-3. Review generated file in `alembic/versions/`
-4. Apply: `uv run alembic upgrade head`
-
-**Best Practices:**
-- **Always review** autogenerated migrations (may miss custom indexes/constraints)
-- **Test before production**: `upgrade head` → `downgrade -1` → `upgrade head`
-- **Never edit applied** migrations (create new migration instead)
-- **Descriptive messages**: "Add email unique constraint" not "Update"
-- **Data migrations**: Add `op.execute("UPDATE ...")` for data transformations
-- **Backup first**: `docker compose exec db pg_dump -U postgres fastapi_db > backup.sql`
-
-**Common Patterns:**
-```python
-# Add column with default
-def upgrade():
-    op.add_column('users', sa.Column('role', sa.String(20), nullable=True))
-    op.execute("UPDATE users SET role = 'user' WHERE role IS NULL")
-    op.alter_column('users', 'role', nullable=False)
-
-# Add index
-def upgrade():
-    op.create_index('ix_users_email', 'users', ['email'])
-```
-
-## Exception Handling
-
-**Custom Exceptions** (extend `AppException` in `app/common/exceptions/`):
-- `NotFoundException` → 404
-- `ValidationException` → 400
-- `ConflictException` → 409
-- `ExternalAPIException` → 502
-
-**Global Handler** (`app/common/middleware/error_handler.py`):
-- Catches all `AppException` and converts to HTTP responses
-- Logs errors automatically
-- API routes should NOT catch exceptions (let middleware handle)
-
-**Usage:**
-```python
-# Service layer
-if not user:
-    raise NotFoundException(f"User {user_id} not found")  # Auto-converts to 404
-
-if len(name) < 2:
-    raise ValidationException("Name too short")  # Auto-converts to 400
-```
-
-## Environment Config
-
-**Files:**
-- `.env.local.example` / `.env.prod.example` - 唯一進版控的範本
-- `.env.local` - Local development（Docker Compose 內部連線：`DB_HOST=db`）
-- `.env.prod` - Production
-
-`ENV` 決定 `Config`（`app/common/core/config.py`）要載入哪個 `.env.{ENV}` 檔，
-未設定時預設 `local`。Docker compose 用 `env_file` 明確指定該環境的檔案。
-
-**App 一律在容器內執行**（`make migrate`/`makemigrations` 等都是
-`docker compose exec app ...`），不需要另外維護一份給本機直連用的
-`DB_HOST=localhost` 設定 —— 這也是舊版 `.env`（本機）/`.env.local`（容器）
-雙檔並存時，兩邊密碼容易對不上而連線失敗的根因。
-
-**機密絕不進版控。** `.gitignore` 已排除 `.env` / `.env.*`（`*.example` 除外）。
-2026-07 曾因缺少這條規則，把 admin 金鑰與密碼 commit 進公開 repo，
-詳見 [docs/security-incident-2026-07.md](docs/security-incident-2026-07.md)。
-
-**Key Variables:**
-```bash
-ENV=local/prod                 # 選擇載入 .env.local 還是 .env.prod
-DB_HOST=db                     # docker-compose 裡的 service name
-REDIS_HOST=redis               # docker-compose 裡的 service name
-ADMIN_SECRET_KEY=secret        # Admin panel session 簽章金鑰(每個環境各自一把)
-```
-
-**注意：** `DB_PASSWORD` / `REDIS_PASSWORD` 同時扮演兩種角色 —— 既是 app
-容器讀取的連線密碼，也是 compose 拿去初始化 `db`/`redis` 容器的密碼（靠
-Makefile 的 `--env-file` 做變數替換）。中途改密碼但資料庫 volume 已用舊密碼
-初始化過時兩者不會自動同步，需 `make docker-clean` 清空 volume 重建，或把
-`.env.local` 改回 volume 實際初始化時用的密碼。
-
-**啟動時的安全驗證** (`Config.enforce_secure_settings()`，由 `app/main.py` 呼叫)：
-
-- `DEBUG=False` 時，若 `ADMIN_SECRET_KEY` / `ADMIN_USERNAME` / `ADMIN_PASSWORD` /
-  `DB_PASSWORD` / `REDIS_PASSWORD` 任一仍是 placeholder（含 `CHANGEME`、`your-`）
-  或開發預設值（`postgres`、`admin123`…），**直接 raise 拒絕啟動**並指名是哪一項。
-- `DEBUG=True` 時只印 warning，不擋本機開發。
-
-新增機密欄位時，記得同步加進 `security_issues()` 的檢查清單，否則它不受保護。
+- 所有 `/api` 端點：`response_model=BaseResponse[XxxRead]`，回傳 `BaseResponse(data=...)`（`app/common/schemas.py`）。
+  刪除回 200 + `BaseResponse()`，不回 204。
+- 錯誤一律 **raise**，由 `error_handler.py` 統一轉換（含 422 驗證錯誤、404 未知路由）。**不要手寫錯誤的 `JSONResponse`**。
+- 例外對應：`NotFoundException` 404、`ValidationException` / `BadRequestException` 400、`UnauthorizedException` 401、
+  `ForbiddenException` 403、`ConflictException` 409（例如名稱重複）、`ExternalAPIException` 502。新類別繼承 `AppException`。
+- `/health/live`、`/health/ready` 是探針：不包 `BaseResponse`、不掛 `/api/v1`。
+
+### 刻意的決策——不是技術債，不要在任務中順手「修正」
+
+- **沒有 Repository 層**：Service 直接操作 Session（`views → services → DB`）。
+- **同步 SQLAlchemy ＋ sync 端點**：FastAPI 會把 sync 端點丟進 threadpool。改 async 要整套換 driver 與 session，另案評估。
+- **沒有 DI 容器**：依賴注入就是 FastAPI 的 `Depends`。
+- **錯誤只有 HTTP 狀態碼，沒有字串錯誤碼**：對齊團隊 `BaseResponse` 契約。
+- **JSON 欄位 snake_case**。
+
+要改這些，另外提出來討論，不要夾在無關的任務裡做。
+
+## 程式碼風格
+
+- 行寬 120；ruff 規則在 `pyproject.toml`（含 `DTZ`、`S`、`BLE`、`TID`）。
+- **時間一律 UTC**：Python 端用 timezone-aware（`datetime.now(UTC)`，ruff `DTZ` 會擋）；DB 欄位一律 `DateTime(timezone=True)`（timestamptz）。
+- **只用 loguru `logger`**，不用 stdlib `logging`（ruff `TID251`）。前綴：`[Service]`、`[External]`；`[API]` 由 middleware 自動記錄，view 不手動 log。
+  4xx 情境用 `logger.warning`，非預期錯誤用 `logger.exception`（自帶 stack trace）。
+- 每行 log 帶上下文：資源 ID（`user_id: {id}`）、數量（`total: {n}`）、耗時（`duration: {d:.3f}s`）。
+  **絕不 log 密碼、金鑰、token**（必要時遮罩成 `token[:10]...`）。
+- `except Exception` 只在兩種地方合理：service 寫入失敗時 rollback 後 re-raise，以及快取／健康檢查失敗時降級。其他地方不吞例外。
+- `# noqa` / `# type: ignore` 只能精準指定規則，並附理由。
+
+## 資料庫
+
+- **改 model 一定要產 migration**：`make makemigrations MSG="..."` → review 產出的檔案 → `make migrate`。CI 會擋 model 與 migration 不同步。
+- 寫或改 migration 前先讀 `docs/database-migrations.md`（expand／contract、新增 NOT NULL 欄位的三步驟）。
+- 新 model 要加進 `alembic/env.py` 的 import，否則 autogenerate 看不到它。
+- 資料表 snake_case 複數（`users`、`chat_sessions`）。
+- 列表查詢一定要 `order_by()`，否則 `offset` 分頁的結果不穩定。
+
+## 設定與機密
+
+- 所有設定都經過 `app/common/core/config.py` 的 `Config`；不要寫裸 `os.getenv()`。
+- `.env.*` 不進版控（只有 `*.example`）。2026-07 曾外洩，見 `docs/security-incident-2026-07.md`。
+- 新增機密欄位時，同步加進 `Config.security_issues()`，否則 `DEBUG=False` 的啟動檢查保護不到它。
+
+## 開發流程
+
+- **由內向外**：model → migration → schema → service ＋ 測試通過 → view ＋ 測試通過。不要從 view 開始。
+- 團隊慣例不明確時**先問**，確認後一次套用到所有檔案。
+- 收尾前跑 **check** skill（format、lint、mypy、pytest）。審查用 **conventions-review**（專案規則），可搭配內建 `/code-review`（找 bug）。
+- 回報時沒實際跑過的項目標「未驗證」，不要打勾。
+
+## Git
+
+- Commit 格式 `<type>: <中文說明>`，type 只有 `feat`／`fix`／`docs`／`style`／`refactor`／`test`／`chore`。
+  **說明用中文**、**不使用 scope**（不寫 `feat(auth):`）。
+- 破壞性變更（呼叫端不改程式就會壞）在 type 後加 `!`：`feat!: 移除 GET /api/v1/users 的 name 欄位`。
+- 分支 `<類型>/<描述>`，類型只有 `feat`／`fix`／`refactor`／`docs`／`chore`；從 `master` 切出、PR 回 `master`，不直接 commit 到 `master`／`main`。
+
+## 文件（動手前先讀）
+
+- `docs/database-migrations.md` — 改 model、寫 migration 之前
+- `docs/redis-cache.md` — 使用 Redis 快取之前
+- `docs/security-incident-2026-07.md` — 動到 `.env`、機密、admin 登入之前

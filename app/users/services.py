@@ -3,7 +3,7 @@
 from loguru import logger
 from sqlalchemy.orm import Session
 
-from app.common.exceptions import NotFoundException, ValidationException
+from app.common.exceptions import ConflictException, NotFoundException
 from app.users.models import User
 from app.users.schemas import UserCreate, UserUpdate
 
@@ -24,10 +24,10 @@ class UserService:
             limit: Maximum number of records to return
 
         Returns:
-            List of users
+            List of users, newest first
         """
         logger.debug(f"[Service] Listing users - skip: {skip}, limit: {limit}")
-        users = self.db.query(User).offset(skip).limit(limit).all()
+        users = self.db.query(User).order_by(User.id.desc()).offset(skip).limit(limit).all()
         logger.info(f"[Service] Retrieved {len(users)} users")
         return users
 
@@ -65,7 +65,7 @@ class UserService:
             Created user
 
         Raises:
-            ValidationException: If validation fails
+            ConflictException: If the name is already taken
         """
         logger.info(f"[Service] Creating user - name: {user_data.name}")
 
@@ -73,7 +73,7 @@ class UserService:
         existing = self.db.query(User).filter(User.name == user_data.name).first()
         if existing:
             logger.warning(f"[Service] Duplicate user name - name: {user_data.name}, existing_id: {existing.id}")
-            raise ValidationException(f"User with name '{user_data.name}' already exists")
+            raise ConflictException(f"User with name '{user_data.name}' already exists")
 
         try:
             user = User(name=user_data.name)
@@ -100,7 +100,7 @@ class UserService:
 
         Raises:
             NotFoundException: If user not found
-            ValidationException: If validation fails
+            ConflictException: If the name is already taken
         """
         logger.info(f"[Service] Updating user - user_id: {user_id}")
 
@@ -110,7 +110,7 @@ class UserService:
         existing = self.db.query(User).filter(User.name == user_data.name, User.id != user_id).first()
         if existing:
             logger.warning(f"[Service] Duplicate user name - name: {user_data.name}, existing_id: {existing.id}")
-            raise ValidationException(f"User with name '{user_data.name}' already exists")
+            raise ConflictException(f"User with name '{user_data.name}' already exists")
 
         try:
             user.name = user_data.name

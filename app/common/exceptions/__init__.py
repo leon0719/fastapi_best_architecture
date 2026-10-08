@@ -1,39 +1,22 @@
 """Custom exception classes for the application."""
 
-from enum import StrEnum
-
-
-class ErrorCode(StrEnum):
-    """Machine-readable error codes, stable across message wording changes.
-
-    Clients should branch on `error_code`, not on the human-readable message.
-    """
-
-    NOT_FOUND = "NOT_FOUND"
-    BAD_REQUEST = "BAD_REQUEST"
-    VALIDATION_FAILED = "VALIDATION_FAILED"
-    CONFLICT = "CONFLICT"
-    UNAUTHORIZED = "UNAUTHORIZED"
-    FORBIDDEN = "FORBIDDEN"
-    EXTERNAL_API_ERROR = "EXTERNAL_API_ERROR"
-    INTERNAL_ERROR = "INTERNAL_ERROR"
-
 
 class AppException(Exception):
-    """Base exception for all application errors."""
+    """Base exception for all application errors.
 
-    def __init__(self, message: str, status_code: int = 500, code: ErrorCode = ErrorCode.INTERNAL_ERROR):
+    The global handler turns it into BaseResponse: {"data": null, "error": {"code": status_code, "message": message}}.
+    """
+
+    def __init__(self, message: str, status_code: int = 500):
         """
         Initialize application exception.
 
         Args:
             message: Error message
-            status_code: HTTP status code
-            code: Machine-readable error code
+            status_code: HTTP status code (also the `error.code` in the response body)
         """
         self.message = message
         self.status_code = status_code
-        self.code = code
         super().__init__(self.message)
 
 
@@ -47,7 +30,7 @@ class NotFoundException(AppException):
         Args:
             message: Error message
         """
-        super().__init__(message, status_code=404, code=ErrorCode.NOT_FOUND)
+        super().__init__(message, status_code=404)
 
 
 class BadRequestException(AppException):
@@ -60,7 +43,7 @@ class BadRequestException(AppException):
         Args:
             message: Error message
         """
-        super().__init__(message, status_code=400, code=ErrorCode.BAD_REQUEST)
+        super().__init__(message, status_code=400)
 
 
 class ValidationException(AppException):
@@ -73,7 +56,7 @@ class ValidationException(AppException):
         Args:
             message: Error message
         """
-        super().__init__(message, status_code=400, code=ErrorCode.VALIDATION_FAILED)
+        super().__init__(message, status_code=400)
 
 
 class ConflictException(AppException):
@@ -86,7 +69,7 @@ class ConflictException(AppException):
         Args:
             message: Error message
         """
-        super().__init__(message, status_code=409, code=ErrorCode.CONFLICT)
+        super().__init__(message, status_code=409)
 
 
 class UnauthorizedException(AppException):
@@ -99,7 +82,7 @@ class UnauthorizedException(AppException):
         Args:
             message: Error message
         """
-        super().__init__(message, status_code=401, code=ErrorCode.UNAUTHORIZED)
+        super().__init__(message, status_code=401)
 
 
 class ForbiddenException(AppException):
@@ -112,7 +95,7 @@ class ForbiddenException(AppException):
         Args:
             message: Error message
         """
-        super().__init__(message, status_code=403, code=ErrorCode.FORBIDDEN)
+        super().__init__(message, status_code=403)
 
 
 class ExternalAPIException(AppException):
@@ -125,4 +108,4 @@ class ExternalAPIException(AppException):
         Args:
             message: Error message
         """
-        super().__init__(message, status_code=502, code=ErrorCode.EXTERNAL_API_ERROR)
+        super().__init__(message, status_code=502)
