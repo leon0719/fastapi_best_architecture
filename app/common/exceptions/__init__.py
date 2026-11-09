@@ -1,111 +1,71 @@
 """Custom exception classes for the application."""
 
+from enum import StrEnum
+
+
+class ErrorCode(StrEnum):
+    """Stable, machine-readable error codes — become `error.reason` in BaseResponse.
+
+    `error.code` is only the HTTP status; `reason` lets clients tell apart failures that share a
+    status (e.g. two different 409s) and use it as an i18n key instead of matching `message`.
+    Add new codes here, never pass ad-hoc strings. Values match the Django Ninja template's codes.
+    """
+
+    BAD_REQUEST = "bad_request"
+    VALIDATION_ERROR = "validation_error"
+    UNAUTHENTICATED = "unauthenticated"
+    PERMISSION_DENIED = "permission_denied"
+    NOT_FOUND = "not_found"
+    CONFLICT = "conflict"
+    EXTERNAL_API_ERROR = "external_api_error"
+    INTERNAL_ERROR = "internal_error"
+    USER_NAME_TAKEN = "user_name_taken"
+    CHATBOT_NAME_TAKEN = "chatbot_name_taken"
+
 
 class AppException(Exception):
     """Base exception for all application errors.
 
-    The global handler turns it into BaseResponse: {"data": null, "error": {"code": status_code, "message": message}}.
+    The global handler turns it into BaseResponse:
+    {"data": null, "error": {"code": status_code, "message": message, "reason": reason}}.
+    Subclasses only set `status_code`, a generic `reason` and `default_message`; pass
+    `reason=ErrorCode.X` when the client needs to branch on this specific failure.
     """
 
-    def __init__(self, message: str, status_code: int = 500):
-        """
-        Initialize application exception.
+    status_code: int = 500
+    reason: ErrorCode = ErrorCode.INTERNAL_ERROR
+    default_message: str = "Internal server error"
 
-        Args:
-            message: Error message
-            status_code: HTTP status code (also the `error.code` in the response body)
-        """
-        self.message = message
-        self.status_code = status_code
+    def __init__(self, message: str | None = None, reason: ErrorCode | None = None):
+        self.message = message or self.default_message
+        if reason is not None:
+            self.reason = reason
         super().__init__(self.message)
 
 
 class NotFoundException(AppException):
-    """Exception raised when a resource is not found."""
-
-    def __init__(self, message: str = "Resource not found"):
-        """
-        Initialize not found exception.
-
-        Args:
-            message: Error message
-        """
-        super().__init__(message, status_code=404)
+    status_code, reason, default_message = 404, ErrorCode.NOT_FOUND, "Resource not found"
 
 
 class BadRequestException(AppException):
-    """Exception raised for invalid request data."""
-
-    def __init__(self, message: str = "Bad request"):
-        """
-        Initialize bad request exception.
-
-        Args:
-            message: Error message
-        """
-        super().__init__(message, status_code=400)
+    status_code, reason, default_message = 400, ErrorCode.BAD_REQUEST, "Bad request"
 
 
 class ValidationException(AppException):
-    """Exception raised when input validation fails."""
-
-    def __init__(self, message: str = "Validation failed"):
-        """
-        Initialize validation exception.
-
-        Args:
-            message: Error message
-        """
-        super().__init__(message, status_code=400)
+    status_code, reason, default_message = 400, ErrorCode.VALIDATION_ERROR, "Validation failed"
 
 
 class ConflictException(AppException):
-    """Exception raised when there's a conflict (e.g., duplicate resource)."""
-
-    def __init__(self, message: str = "Resource conflict"):
-        """
-        Initialize conflict exception.
-
-        Args:
-            message: Error message
-        """
-        super().__init__(message, status_code=409)
+    status_code, reason, default_message = 409, ErrorCode.CONFLICT, "Resource conflict"
 
 
 class UnauthorizedException(AppException):
-    """Exception raised for authentication failures."""
-
-    def __init__(self, message: str = "Unauthorized"):
-        """
-        Initialize unauthorized exception.
-
-        Args:
-            message: Error message
-        """
-        super().__init__(message, status_code=401)
+    status_code, reason, default_message = 401, ErrorCode.UNAUTHENTICATED, "Unauthorized"
 
 
 class ForbiddenException(AppException):
-    """Exception raised for authorization failures."""
-
-    def __init__(self, message: str = "Forbidden"):
-        """
-        Initialize forbidden exception.
-
-        Args:
-            message: Error message
-        """
-        super().__init__(message, status_code=403)
+    status_code, reason, default_message = 403, ErrorCode.PERMISSION_DENIED, "Forbidden"
 
 
 class ExternalAPIException(AppException):
-    """Exception raised when external API calls fail."""
-
-    def __init__(self, message: str = "External API error"):
-        """
-        Initialize external API exception.
-
-        Args:
-            message: Error message
-        """
-        super().__init__(message, status_code=502)
+    status_code, reason, default_message = 502, ErrorCode.EXTERNAL_API_ERROR, "External API error"

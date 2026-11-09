@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.chatbots.models import Chatbot
 from app.chatbots.schemas import ChatbotCreate, ChatbotUpdate
-from app.common.exceptions import ConflictException, NotFoundException
+from app.common.exceptions import ConflictException, ErrorCode, NotFoundException
 
 
 class ChatbotService:
@@ -31,7 +31,9 @@ class ChatbotService:
         logger.info(f"[Service] Creating chatbot - name: {data.name}")
         existing = self.db.query(Chatbot).filter(Chatbot.name == data.name).first()
         if existing:
-            raise ConflictException(f"Chatbot with name '{data.name}' already exists")
+            raise ConflictException(
+                f"Chatbot with name '{data.name}' already exists", reason=ErrorCode.CHATBOT_NAME_TAKEN
+            )
 
         chatbot = Chatbot(
             name=data.name,
@@ -49,7 +51,9 @@ class ChatbotService:
         if data.name is not None:
             existing = self.db.query(Chatbot).filter(Chatbot.name == data.name, Chatbot.id != chatbot_id).first()
             if existing:
-                raise ConflictException(f"Chatbot with name '{data.name}' already exists")
+                raise ConflictException(
+                    f"Chatbot with name '{data.name}' already exists", reason=ErrorCode.CHATBOT_NAME_TAKEN
+                )
             chatbot.name = data.name
         if data.description is not None:
             chatbot.description = data.description

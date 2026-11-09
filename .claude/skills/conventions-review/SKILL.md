@@ -15,6 +15,7 @@ description: 依本專案的分層慣例與後端檢查清單審查目前的 dif
 
 - [ ] `views.py` 只做 HTTP：沒有 ORM 查詢、沒有業務邏輯、沒有 try/except、沒有手寫錯誤回應。
 - [ ] 業務邏輯在 `services.py`；失敗 raise `AppException` 子類別，不回傳 HTTP 物件。
+- [ ] 前端需要分辨的失敗帶專屬 `reason=ErrorCode.X`（碼定義在 `ErrorCode`，不傳臨時字串）。
 - [ ] `get_db` 從 `app.common.db.database` import，沒有在 views 重新定義。
 - [ ] 第三方 HTTP 只在 `external_services.py`，有 timeout、`[External]` log、失敗轉 `ExternalAPIException`
       （`httpx` 放錯層 ruff `TID251` 已經會擋，不必人工再查）。

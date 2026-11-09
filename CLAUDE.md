@@ -53,11 +53,11 @@ Client → RequestLoggingMiddleware → router (app/<name>/views.py) → service
 
 新 app 或新資源 → **scaffold-app** skill。**參考實作是 `app/users`**——照抄它的形狀，不要另創寫法。
 
-### 回應格式（團隊契約，與 .NET 後端、前端 `axiosService` 相同）
+### 回應格式（團隊契約，與 Django Ninja 模板、.NET 後端、前端 `shared/api` 相同）
 
 ```
 成功 {"data": <T>, "error": null}
-失敗 {"data": null, "error": {"code": <HTTP 狀態碼>, "message": "..."}}
+失敗 {"data": null, "error": {"code": <HTTP 狀態碼>, "message": "...", "reason": "<ErrorCode>" | null}}
 ```
 
 - 所有 `/api` 端點：`response_model=BaseResponse[XxxRead]`，回傳 `BaseResponse(data=...)`（`app/common/schemas.py`）。
@@ -65,6 +65,9 @@ Client → RequestLoggingMiddleware → router (app/<name>/views.py) → service
 - 錯誤一律 **raise**，由 `error_handler.py` 統一轉換（含 422 驗證錯誤、404 未知路由）。**不要手寫錯誤的 `JSONResponse`**。
 - 例外對應：`NotFoundException` 404、`ValidationException` / `BadRequestException` 400、`UnauthorizedException` 401、
   `ForbiddenException` 403、`ConflictException` 409（例如名稱重複）、`ExternalAPIException` 502。新類別繼承 `AppException`。
+- `reason` 是穩定的機器可讀碼（`app/common/exceptions` 的 `ErrorCode`），讓前端在同一狀態碼下分辨原因、當 i18n key，
+  不用比對 `message`。每個例外類別有通用預設值；前端需要分辨的情境就帶專屬碼：
+  `ConflictException(msg, reason=ErrorCode.USER_NAME_TAKEN)`。新碼加進 `ErrorCode`，不要傳臨時字串。
 - `/health/live`、`/health/ready` 是探針：不包 `BaseResponse`、不掛 `/api/v1`。
 
 ### 刻意的決策——不是技術債，不要在任務中順手「修正」
@@ -72,7 +75,7 @@ Client → RequestLoggingMiddleware → router (app/<name>/views.py) → service
 - **沒有 Repository 層**：Service 直接操作 Session（`views → services → DB`）。
 - **同步 SQLAlchemy ＋ sync 端點**：FastAPI 會把 sync 端點丟進 threadpool。改 async 要整套換 driver 與 session，另案評估。
 - **沒有 DI 容器**：依賴注入就是 FastAPI 的 `Depends`。
-- **錯誤只有 HTTP 狀態碼，沒有字串錯誤碼**：對齊團隊 `BaseResponse` 契約。
+- **錯誤是 `BaseResponse` + `reason` 字串碼，不是 RFC 9457 Problem Details**：對齊團隊契約。
 - **JSON 欄位 snake_case**。
 
 要改這些，另外提出來討論，不要夾在無關的任務裡做。

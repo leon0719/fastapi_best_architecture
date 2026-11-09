@@ -3,7 +3,7 @@
 from loguru import logger
 from sqlalchemy.orm import Session
 
-from app.common.exceptions import ConflictException, NotFoundException
+from app.common.exceptions import ConflictException, ErrorCode, NotFoundException
 from app.users.models import User
 from app.users.schemas import UserCreate, UserUpdate
 
@@ -73,7 +73,9 @@ class UserService:
         existing = self.db.query(User).filter(User.name == user_data.name).first()
         if existing:
             logger.warning(f"[Service] Duplicate user name - name: {user_data.name}, existing_id: {existing.id}")
-            raise ConflictException(f"User with name '{user_data.name}' already exists")
+            raise ConflictException(
+                f"User with name '{user_data.name}' already exists", reason=ErrorCode.USER_NAME_TAKEN
+            )
 
         try:
             user = User(name=user_data.name)
@@ -110,7 +112,9 @@ class UserService:
         existing = self.db.query(User).filter(User.name == user_data.name, User.id != user_id).first()
         if existing:
             logger.warning(f"[Service] Duplicate user name - name: {user_data.name}, existing_id: {existing.id}")
-            raise ConflictException(f"User with name '{user_data.name}' already exists")
+            raise ConflictException(
+                f"User with name '{user_data.name}' already exists", reason=ErrorCode.USER_NAME_TAKEN
+            )
 
         try:
             user.name = user_data.name

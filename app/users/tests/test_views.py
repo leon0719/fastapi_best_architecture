@@ -28,7 +28,7 @@ def test_create_user_with_taken_name_returns_409(client):
     assert resp.status_code == 409
     assert resp.json() == {
         "data": None,
-        "error": {"code": 409, "message": "User with name 'alice' already exists"},
+        "error": {"code": 409, "message": "User with name 'alice' already exists", "reason": "user_name_taken"},
     }
 
 
@@ -39,6 +39,7 @@ def test_create_user_with_invalid_body_returns_422(client):
     body = resp.json()
     assert body["data"] is None
     assert body["error"]["code"] == 422
+    assert body["error"]["reason"] == "validation_error"
     assert body["error"]["message"].startswith("name:")
 
 
@@ -46,7 +47,7 @@ def test_get_missing_user_returns_404(client):
     resp = client.get(f"{URL}/999")
 
     assert resp.status_code == 404
-    assert resp.json()["error"] == {"code": 404, "message": "User with id 999 not found"}
+    assert resp.json()["error"] == {"code": 404, "message": "User with id 999 not found", "reason": "not_found"}
 
 
 def test_list_users(client):

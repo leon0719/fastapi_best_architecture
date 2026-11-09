@@ -9,7 +9,7 @@ def test_unknown_route_returns_base_response_404(client):
     resp = client.get("/api/v1/does-not-exist")
 
     assert resp.status_code == 404
-    assert resp.json() == {"data": None, "error": {"code": 404, "message": "Not Found"}}
+    assert resp.json() == {"data": None, "error": {"code": 404, "message": "Not Found", "reason": "not_found"}}
 
 
 def test_wrong_method_returns_base_response_405_with_allow_header(client):

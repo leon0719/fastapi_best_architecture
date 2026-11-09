@@ -6,7 +6,8 @@
       "Bash(*-f docker-compose.yml*)",
       "Bash(make docker-clean*)",
       "Bash(git push*)",
-      "Read(./.env.prod)"
+      "Read(./.env.prod)",
+      "Bash(*.env.prod*)"
     ]
   }
 }

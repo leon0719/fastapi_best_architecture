@@ -100,6 +100,7 @@ class ProductRead(BaseModel):
 - `class ProductService:`，`__init__(self, db: Session)`。
 - 列表查詢一定 `order_by()`（通常 `Product.id.desc()`），再 `offset/limit`。
 - 找不到 → `NotFoundException`；名稱重複 → `ConflictException`；輸入不合業務規則 → `ValidationException`。
+- 前端需要分辨的失敗帶專屬 `reason`：先在 `ErrorCode` 加碼，再 `ConflictException(msg, reason=ErrorCode.XXX_NAME_TAKEN)`（參考 `app/users/services.py`）。
 - 寫入：`add` → `commit` → `refresh`，包在 `try / except Exception: rollback; logger.exception(...); raise`。
 - log 前綴 `[Service]`，帶資源 ID。
 
