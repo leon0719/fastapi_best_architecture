@@ -3,31 +3,33 @@ name = "fastapi-best-architecture"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.15"
 dependencies = [
-    "fastapi>=0.118.2",
+    "fastapi>=0.162.2",
     "httpx>=0.28.1",
     "loguru>=0.7.3",
-    "pydantic-settings>=2.11.0",
-    "python-dotenv>=1.1.1",
-    "sqlalchemy>=2.0.43",
-    "sqladmin>=0.21.0",
+    "pydantic-settings>=2.16.2",
+    "python-dotenv>=1.2.4",
+    # [asyncio] pulls in greenlet: the app itself is sync, but sqladmin imports
+    # sqlalchemy.ext.asyncio at import time (SQLAlchemy 2.1 no longer installs greenlet by default).
+    "sqlalchemy[asyncio]>=2.1.8",
+    "sqladmin>=0.32.0",
     "aiofiles>=25.1.0",
-    "python-multipart>=0.0.20",
+    "python-multipart>=0.0.33",
     "itsdangerous>=2.2.0",
-    "psycopg[binary]>=3.2.10",
-    "redis[hiredis]>=6.4.0",
-    "alembic>=1.17.0",
+    "psycopg[binary]>=3.3.8",
+    "redis[hiredis]>=8.1.0",
+    "alembic>=1.20.1",
     "backoff>=2.2.1",
-    "uvicorn[standard]>=0.37.0",
+    "uvicorn[standard]>=0.54.0",
 ]
 
 [dependency-groups]
 dev = [
-    "mypy>=2.3.0",
-    "pytest>=8.4.2",
+    "mypy>=2.4.1",
+    "pytest>=9.2.0",
     "pytest-cov>=7.1.0",
-    "ruff>=0.14.0",
+    "ruff>=0.17.4",
     "vulture>=2.16",
 ]
 
@@ -42,7 +44,7 @@ markers = [
 
 [tool.ruff]
 line-length = 120
-target-version = "py313"
+target-version = "py315"
 exclude = ["alembic/versions"]
 
 [tool.ruff.lint]
@@ -88,7 +90,7 @@ select = [
 "app/common/core/admin.py" = ["S105"]
 
 [tool.mypy]
-python_version = "3.13"
+python_version = "3.15"
 explicit_package_bases = true
 check_untyped_defs = true
 warn_unused_ignores = true

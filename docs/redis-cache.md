@@ -8,7 +8,7 @@
 from app.common.core.redis import RedisCache, cache_result
 
 cache = RedisCache()
-cache.set("key", "value", expire=300)                   # 字串，TTL 秒數
+cache.set("key", "value", expire=300)  # 字串，TTL 秒數
 cache.set_json("user:123", {"name": "John"}, expire=60)  # JSON 序列化
 cache.get("key")
 cache.get_json("user:123")
@@ -20,8 +20,7 @@ cache.incr("counter")
 
 ```python
 @cache_result(expire=3600, key_prefix="user")
-def get_profile(user_id: int) -> dict:
-    ...
+def get_profile(user_id: int) -> dict: ...
 ```
 
 ## 規則

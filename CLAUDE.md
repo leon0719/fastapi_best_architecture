@@ -11,7 +11,7 @@
 
 ## 專案概要
 
-FastAPI + SQLAlchemy 2.0（sync）+ Alembic + PostgreSQL + Redis + SQLAdmin，Python 3.13，套件管理用 `uv`（不用 pip／poetry）。
+FastAPI + SQLAlchemy 2.1（sync）+ Alembic + PostgreSQL + Redis + SQLAdmin，Python 3.15，套件管理用 `uv`（不用 pip／poetry）。
 **Django-style app**：每個功能是一個自足的 `app/<name>/`。開發環境跑在 Docker（hot-reload）。
 
 ## 指令（`make help` 看全部）
@@ -44,7 +44,7 @@ Client → RequestLoggingMiddleware → router (app/<name>/views.py) → service
 - **views.py** — 只做 HTTP：取依賴、呼叫 service、`return BaseResponse(data=...)`。不寫 ORM、不寫業務邏輯、不寫 try/except。
 - **schemas.py** — Pydantic 請求／回應：`XxxCreate` / `XxxUpdate` / `XxxRead`（`from_attributes=True`）。
 - **services.py** — 業務邏輯，`XxxService(db)`；commit／rollback 在這層；失敗一律 raise `AppException` 子類別。
-- **models.py** — SQLAlchemy 2.0 `Mapped[...]`。**不要寫 `class Meta`**——那是 Django 寫法，SQLAlchemy 會直接忽略：
+- **models.py** — SQLAlchemy 2.1 `Mapped[...]`。**不要寫 `class Meta`**——那是 Django 寫法，SQLAlchemy 會直接忽略：
   index 用 `mapped_column(index=True)` 或 `__table_args__`，排序寫在查詢的 `order_by()`。
 - **admin.py** — SQLAdmin `ModelView`；每個 model 都要註冊。
 - **external_services.py** — 第三方 HTTP 呼叫**唯一**能放的地方（ruff `TID251` 強制）。需要時才建立。

@@ -1,13 +1,13 @@
 # FastAPI Backend Template
 
-FastAPI + SQLAlchemy 2.0 + Alembic + PostgreSQL + Redis + SQLAdmin 的後端模板，採 **Django-style app 結構**：
+FastAPI + SQLAlchemy 2.1 + Alembic + PostgreSQL + Redis + SQLAdmin 的後端模板，採 **Django-style app 結構**：
 每個功能是一個自足的 `app/<name>/`（models／schemas／services／views／admin／tests）。
 
 開發規則的正本是 [CLAUDE.md](./CLAUDE.md)（人與 AI 共用）；本檔只講怎麼跑起來。
 
 ## 需求
 
-- Python 3.13、[uv](https://docs.astral.sh/uv/)
+- Python 3.15、[uv](https://docs.astral.sh/uv/)
 - Docker 與 Docker Compose（macOS 可用 colima）
 
 ## 快速開始
