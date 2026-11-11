@@ -1,126 +1,144 @@
 # CLAUDE.md
 
-本檔只列**每種任務都會踩到的硬規則**。特定任務的流程與模板在 `.claude/skills/` 與 `docs/`——
-動手前先讀指向的檔案，不要憑記憶寫。
+This file holds only the hard rules every task touches. Task-specific procedures and templates live in
+`.claude/skills/` and `docs/` — read the pointed-to file before working in that area instead of guessing.
 
-## 回應語言
+## Response language
 
-**一律使用繁體中文，採台灣本地化用語**——用 程式碼／資料／函式／物件／介面／型別／快取／預設／效能，
-不用 代碼／數據／函數／對象／接口／類型／緩存／默認／性能。即使以英文提問，回應仍用繁體中文。
-程式碼識別字、檔名、目錄名、套件名保持英文不翻譯。
+Always reply in Traditional Chinese (繁體中文) with Taiwan-localized wording, even when asked in English —
+use 程式碼／資料／函式／物件／介面／型別／快取／預設／效能, never 代碼／數據／函數／對象／接口／類型／緩存／默認／性能.
+Code identifiers, file names, directory names, and package names stay in English.
 
-## 專案概要
+## Project Overview
 
-FastAPI + SQLAlchemy 2.1（sync）+ Alembic + PostgreSQL + Redis + SQLAdmin，Python 3.15，套件管理用 `uv`（不用 pip／poetry）。
-**Django-style app**：每個功能是一個自足的 `app/<name>/`。開發環境跑在 Docker（hot-reload）。
+FastAPI + SQLAlchemy 2.1 (sync) + Alembic + PostgreSQL + Redis + SQLAdmin, Python 3.15, `uv` as the
+package manager (no pip/poetry). **Django-style apps**: each feature is a self-contained `app/<name>/`.
+The dev environment runs in Docker (hot reload).
 
-## 指令（`make help` 看全部）
+## Commands (`make help` lists all)
 
-- `make up` / `make down` / `make rebuild`（改 Dockerfile 或依賴後）/ `make logs-app`
-- `make test` — 本機直接跑，**不需要 Docker**（in-memory SQLite）；`make test TEST=app/users/tests/test_views.py` 跑單檔
+- `make up` / `make down` / `make rebuild` (after Dockerfile or dependency changes) / `make logs-app`
+- `make test` — runs locally, **no Docker needed** (in-memory SQLite); `make test TEST=app/users/tests/test_views.py` for one file
 - `make all` — format + lint + type-check + test
-- `make migrate` / `make makemigrations MSG="Add email to users"` — 在 app 容器內執行，需先 `make up` 且有 `.env.local`
-- `make secrets-scan` / `make audit` / `make sast` — 與 CI 的安全檢查相同
-- 加依賴：`uv add <pkg>` / `uv add --dev <pkg>`
+- `make migrate` / `make makemigrations MSG="Add email to users"` — run inside the app container; needs `make up` and `.env.local`
+- `make secrets-scan` / `make audit` / `make sast` — the same security checks CI runs
+- Add a dependency: `uv add <pkg>` / `uv add --dev <pkg>`
 
-## ⛔ 只能由人執行
+## Human-only operations ⛔
 
-不要自己執行——停下來，把完整指令交給使用者：
-- 任何碰 prod 的操作：`make prod-*`、`docker-compose.yml`（prod compose）、連線到 prod DB／Redis
-- `git push`（任何分支）、force-push、改寫已推送的歷史
-- `make docker-clean`（清空本機 DB volume）
-- 刪除或修改可能已在任何環境套用的 migration
-- 呼叫真實的第三方 API／webhook、寄出真實 email
+Never run these yourself — stop and hand the exact command to the user
+(`.claude/settings.json` and `.claude/hooks/block-human-only.sh` also block them):
+- Anything touching prod: `make prod-*`, `docker-compose.yml` (the prod compose file), connecting to a prod DB/Redis
+- `git push` (any branch), force-push, rewriting published history
+- `make docker-clean` (wipes the local DB volume)
+- Deleting or rewriting migrations that may already be applied anywhere
+- Calling real third-party APIs / webhooks, sending real email
 
-## 架構
+## Architecture
 
 ```
 Client → RequestLoggingMiddleware → router (app/<name>/views.py) → services.py → SQLAlchemy Session → PostgreSQL
-                                          └─ 任何例外 → app/common/middleware/error_handler.py → BaseResponse
+                                          └─ any exception → app/common/middleware/error_handler.py → BaseResponse
 ```
 
-### 各檔職責
+### File responsibilities
 
-- **views.py** — 只做 HTTP：取依賴、呼叫 service、`return BaseResponse(data=...)`。不寫 ORM、不寫業務邏輯、不寫 try/except。
-- **schemas.py** — Pydantic 請求／回應：`XxxCreate` / `XxxUpdate` / `XxxRead`（`from_attributes=True`）。
-- **services.py** — 業務邏輯，`XxxService(db)`；commit／rollback 在這層；失敗一律 raise `AppException` 子類別。
-- **models.py** — SQLAlchemy 2.1 `Mapped[...]`。**不要寫 `class Meta`**——那是 Django 寫法，SQLAlchemy 會直接忽略：
-  index 用 `mapped_column(index=True)` 或 `__table_args__`，排序寫在查詢的 `order_by()`。
-- **admin.py** — SQLAdmin `ModelView`；每個 model 都要註冊。
-- **external_services.py** — 第三方 HTTP 呼叫**唯一**能放的地方（ruff `TID251` 強制）。需要時才建立。
-- **utils.py** — 純函式，不碰 DB 與外部 API。需要時才建立。
-- **tests/** — `test_services.py`（每條業務規則、每個例外分支）＋ `test_views.py`（狀態碼與回應 body）。
+- **views.py** — HTTP only: resolve dependencies, call the service, `return BaseResponse(data=...)`.
+  No ORM, no business logic, no try/except.
+- **schemas.py** — Pydantic request/response: `XxxCreate` / `XxxUpdate` / `XxxRead` (`from_attributes=True`).
+- **services.py** — business logic, `XxxService(db)`; commit/rollback happen here; failures raise an
+  `AppException` subclass.
+- **models.py** — SQLAlchemy 2.1 `Mapped[...]`. **No `class Meta`** — that is Django; SQLAlchemy silently
+  ignores it. Indexes: `mapped_column(index=True)` or `__table_args__`; ordering: `order_by()` in the query.
+- **admin.py** — SQLAdmin `ModelView`; every model is registered.
+- **external_services.py** — the *only* place third-party HTTP calls live (ruff `TID251`). Create it only when needed.
+- **utils.py** — pure functions, no DB, no external APIs. Create it only when needed.
+- **tests/** — `test_services.py` (every business rule and exception branch) + `test_views.py` (status code and response body).
 
-新 app 或新資源 → **scaffold-app** skill。**參考實作是 `app/users`**——照抄它的形狀，不要另創寫法。
+New app or new resource → the **scaffold-app** skill. **The reference implementation is `app/users`** —
+copy its shape, don't invent another.
 
-### 回應格式（團隊契約，與 Django Ninja 模板、.NET 後端、前端 `shared/api` 相同）
+### Response format (team contract, same as the Django Ninja template, the .NET backend, and frontend `shared/api`)
 
 ```
-成功 {"data": <T>, "error": null}
-失敗 {"data": null, "error": {"code": <HTTP 狀態碼>, "message": "...", "reason": "<ErrorCode>" | null}}
+success {"data": <T>, "error": null}
+failure {"data": null, "error": {"code": <HTTP status>, "message": "...", "reason": "<ErrorCode>" | null}}
 ```
 
-- 所有 `/api` 端點：`response_model=BaseResponse[XxxRead]`，回傳 `BaseResponse(data=...)`（`app/common/schemas.py`）。
-  刪除回 200 + `BaseResponse()`，不回 204。
-- 錯誤一律 **raise**，由 `error_handler.py` 統一轉換（含 422 驗證錯誤、404 未知路由）。**不要手寫錯誤的 `JSONResponse`**。
-- 例外對應：`NotFoundException` 404、`ValidationException` / `BadRequestException` 400、`UnauthorizedException` 401、
-  `ForbiddenException` 403、`ConflictException` 409（例如名稱重複）、`ExternalAPIException` 502。新類別繼承 `AppException`。
-- `reason` 是穩定的機器可讀碼（`app/common/exceptions` 的 `ErrorCode`），讓前端在同一狀態碼下分辨原因、當 i18n key，
-  不用比對 `message`。每個例外類別有通用預設值；前端需要分辨的情境就帶專屬碼：
-  `ConflictException(msg, reason=ErrorCode.USER_NAME_TAKEN)`。新碼加進 `ErrorCode`，不要傳臨時字串。
-- `/health/live`、`/health/ready` 是探針：不包 `BaseResponse`、不掛 `/api/v1`。
+- Every `/api` endpoint: `response_model=BaseResponse[XxxRead]`, returning `BaseResponse(data=...)`
+  (`app/common/schemas.py`). Delete → 200 + `BaseResponse()`, not 204.
+- Errors are always **raised** and converted by `error_handler.py` (including 422 validation errors and
+  404 unknown routes). Never hand-build an error `JSONResponse`.
+- Exception mapping: `NotFoundException` 404, `ValidationException` / `BadRequestException` 400,
+  `UnauthorizedException` 401, `ForbiddenException` 403, `ConflictException` 409 (e.g. duplicate name),
+  `ExternalAPIException` 502. New classes inherit `AppException`.
+- `reason` is a stable machine-readable code (`ErrorCode` in `app/common/exceptions`) that lets the frontend
+  tell causes apart under one status code and use it as an i18n key instead of matching `message`.
+  Each exception class has a generic default; cases the frontend must distinguish carry their own code:
+  `ConflictException(msg, reason=ErrorCode.USER_NAME_TAKEN)`. Add new codes to `ErrorCode`; never pass ad-hoc strings.
+- `/health/live` and `/health/ready` are probes: not wrapped in `BaseResponse`, not under `/api/v1`.
 
-### 刻意的決策——不是技術債，不要在任務中順手「修正」
+### Deliberate decisions — not tech debt, don't "fix" them in a task
 
-- **沒有 Repository 層**：Service 直接操作 Session（`views → services → DB`）。
-- **同步 SQLAlchemy ＋ sync 端點**：FastAPI 會把 sync 端點丟進 threadpool。改 async 要整套換 driver 與 session，另案評估。
-- **沒有 DI 容器**：依賴注入就是 FastAPI 的 `Depends`。
-- **錯誤是 `BaseResponse` + `reason` 字串碼，不是 RFC 9457 Problem Details**：對齊團隊契約。
-- **JSON 欄位 snake_case**。
+- **No Repository layer**: services use the Session directly (`views → services → DB`).
+- **Sync SQLAlchemy + sync endpoints**: FastAPI runs sync endpoints in a threadpool. Going async means
+  swapping the driver and session wholesale — a separate proposal.
+- **No DI container**: dependency injection is FastAPI's `Depends`.
+- **Errors are `BaseResponse` + a `reason` string code, not RFC 9457 Problem Details**: matches the team contract.
+- **JSON fields are snake_case.**
 
-要改這些，另外提出來討論，不要夾在無關的任務裡做。
+To change any of these, raise it separately; never fold it into an unrelated task.
 
-## 程式碼風格
+## Code Style
 
-- 行寬 120；ruff 規則在 `pyproject.toml`（含 `DTZ`、`S`、`BLE`、`TID`）。
-- **時間一律 UTC**：Python 端用 timezone-aware（`datetime.now(UTC)`，ruff `DTZ` 會擋）；DB 欄位一律 `DateTime(timezone=True)`（timestamptz）。
-- **只用 loguru `logger`**，不用 stdlib `logging`（ruff `TID251`）。前綴：`[Service]`、`[External]`；`[API]` 由 middleware 自動記錄，view 不手動 log。
-  4xx 情境用 `logger.warning`，非預期錯誤用 `logger.exception`（自帶 stack trace）。
-- 每行 log 帶上下文：資源 ID（`user_id: {id}`）、數量（`total: {n}`）、耗時（`duration: {d:.3f}s`）。
-  **絕不 log 密碼、金鑰、token**（必要時遮罩成 `token[:10]...`）。
-- `except Exception` 只在兩種地方合理：service 寫入失敗時 rollback 後 re-raise，以及快取／健康檢查失敗時降級。其他地方不吞例外。
-- `# noqa` / `# type: ignore` 只能精準指定規則，並附理由。
+- Line length 120; ruff rules in `pyproject.toml` (incl. `DTZ`, `S`, `BLE`, `TID`).
+- **Time is always UTC**: timezone-aware in Python (`datetime.now(UTC)`, enforced by ruff `DTZ`);
+  DB columns are always `DateTime(timezone=True)` (timestamptz).
+- **loguru `logger` only**, never stdlib `logging` (ruff `TID251`). Prefixes: `[Service]`, `[External]`;
+  `[API]` is logged by the middleware, so views do not log by hand.
+  4xx situations → `logger.warning`; unexpected errors → `logger.exception` (includes the stack trace).
+- Every log line carries context: resource ID (`user_id: {id}`), counts (`total: {n}`), duration (`duration: {d:.3f}s`).
+  **Never log passwords, keys, or tokens** (mask as `token[:10]...` if unavoidable).
+- `except Exception` is legitimate in two places only: a service rolling back a failed write and
+  re-raising, and degrading when cache/health checks fail. Nowhere else swallows exceptions.
+- `# noqa` / `# type: ignore` must name the exact rule and give a reason.
 
-## 資料庫
+## Database
 
-- **改 model 一定要產 migration**：`make makemigrations MSG="..."` → review 產出的檔案 → `make migrate`。CI 會擋 model 與 migration 不同步。
-- 寫或改 migration 前先讀 `docs/database-migrations.md`（expand／contract、新增 NOT NULL 欄位的三步驟）。
-- 新 model 要加進 `alembic/env.py` 的 import，否則 autogenerate 看不到它。
-- 資料表 snake_case 複數（`users`、`chat_sessions`）。
-- 列表查詢一定要 `order_by()`，否則 `offset` 分頁的結果不穩定。
+- **A model change always needs a migration**: `make makemigrations MSG="..."` → review the generated
+  file → `make migrate`. CI blocks model/migration drift.
+- Read `docs/database-migrations.md` before writing or changing a migration (expand/contract, the three
+  steps for adding a NOT NULL column).
+- Add every new model to the imports in `alembic/env.py`, or autogenerate cannot see it.
+- Table names are snake_case plural (`users`, `chat_sessions`).
+- List queries always `order_by()`, otherwise `offset` pagination is unstable.
 
-## 設定與機密
+## Settings and secrets
 
-- 所有設定都經過 `app/common/core/config.py` 的 `Config`；不要寫裸 `os.getenv()`。
-- `.env.*` 不進版控（只有 `*.example`）。2026-07 曾外洩，見 `docs/security-incident-2026-07.md`。
-- 新增機密欄位時，同步加進 `Config.security_issues()`，否則 `DEBUG=False` 的啟動檢查保護不到它。
+- All settings flow through `Config` in `app/common/core/config.py`; no raw `os.getenv()`.
+- `.env.*` is never committed (only `*.example`). It leaked in 2026-07 — see `docs/security-incident-2026-07.md`.
+- When adding a secret field, also add it to `Config.security_issues()`, or the `DEBUG=False` startup
+  check does not protect it.
 
-## 開發流程
+## How to work
 
-- **由內向外**：model → migration → schema → service ＋ 測試通過 → view ＋ 測試通過。不要從 view 開始。
-- 團隊慣例不明確時**先問**，確認後一次套用到所有檔案。
-- 收尾前跑 **check** skill（format、lint、mypy、pytest）。審查用 **conventions-review**（專案規則），可搭配內建 `/code-review`（找 bug）。
-- 回報時沒實際跑過的項目標「未驗證」，不要打勾。
+- **Inside out**: model → migration → schema → service + passing tests → view + passing tests. Never start from the view.
+- When a team convention is unclear, **ask first**, then apply the answer to every file at once.
+- Before you finish, run the **check** skill (format, lint, mypy, pytest). For review, **conventions-review**
+  (project rules) complements the built-in `/code-review` (bugs).
+- Report unverified items as unverified — never tick something you didn't run.
 
 ## Git
 
-- Commit 格式 `<type>: <中文說明>`，type 只有 `feat`／`fix`／`docs`／`style`／`refactor`／`test`／`chore`。
-  **說明用中文**、**不使用 scope**（不寫 `feat(auth):`）。
-- 破壞性變更（呼叫端不改程式就會壞）在 type 後加 `!`：`feat!: 移除 GET /api/v1/users 的 name 欄位`。
-- 分支 `<類型>/<描述>`，類型只有 `feat`／`fix`／`refactor`／`docs`／`chore`；從 `master` 切出、PR 回 `master`，不直接 commit 到 `master`／`main`。
+- Commit format `<type>: <description in Chinese>`; type is one of `feat` / `fix` / `docs` / `style` /
+  `refactor` / `test` / `chore`. The description is written in Chinese. No scope (never `feat(auth):`).
+- Breaking change (callers break unless they change code): add `!` after the type —
+  `feat!: 移除 GET /api/v1/users 的 name 欄位`.
+- Branch `<type>/<description>`, type one of `feat` / `fix` / `refactor` / `docs` / `chore`; branch from
+  `master`, PR back to `master`, never commit directly to `master` / `main`.
 
-## 文件（動手前先讀）
+## Docs — read before working in that area
 
-- `docs/database-migrations.md` — 改 model、寫 migration 之前
-- `docs/redis-cache.md` — 使用 Redis 快取之前
-- `docs/security-incident-2026-07.md` — 動到 `.env`、機密、admin 登入之前
+- `docs/database-migrations.md` — before changing a model or writing a migration
+- `docs/redis-cache.md` — before using the Redis cache
+- `docs/security-incident-2026-07.md` — before touching `.env`, secrets, or admin login

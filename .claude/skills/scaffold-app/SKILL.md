@@ -1,29 +1,34 @@
 ---
 name: scaffold-app
-description: 依本專案分層慣例新增 FastAPI app 或在既有 app 加一組 CRUD 資源——model、migration、schema、service、views、SQLAdmin、測試，並完成 main.py 與 alembic/env.py 的註冊。Use when the user asks to "開新 app"、"新增模組"、"新增 table"、"建立 model"、"加端點"、"新增 API"、"新增 CRUD"、"create a new app"、"add an endpoint"、"add a resource"。
+description: Add a new FastAPI app, or a CRUD resource in an existing app, following this project's layering — model, migration, schema, service, views, SQLAdmin, tests — and register it in main.py and alembic/env.py. Use when the user asks to "create a new app", "add an endpoint", "add a resource", "開新 app", "新增模組", "新增 table", "建立 model", "加端點", "新增 API", "新增 CRUD".
 ---
 
-# 新增 app／資源
+# Add an app / resource
 
-參考實作是 **`app/users`**——照抄它的形狀，不要另創寫法。既有 app 加資源時，跳過步驟 0 與「註冊」中已經做過的項目。
+The reference implementation is **`app/users`** — copy its shape, don't invent another. When adding a
+resource to an existing app, skip step 0 and the registration items already done.
 
-開始前先向使用者確認 app 名稱與主要 model 的欄位。其他慣例不明確時**先問**，確認後一次套用到所有檔案——不要每個檔案各自發明一條規則。
+Before starting, confirm the app name and the main model's fields with the user. When any other
+convention is unclear, **ask first**, then apply the answer to every file at once — do not invent a
+separate rule per file.
 
-**由內向外**寫，前一層的測試沒過不要開始下一層：model → migration → schema → service（＋測試）→ views（＋測試）。
-從 views 開始寫，service 的 bug 會藏在 HTTP 的雜訊後面。
+Write **inside out**, and do not start a layer until the previous layer's tests pass:
+model → migration → schema → service (+ tests) → views (+ tests).
+Starting from views hides service bugs behind HTTP noise.
 
-## 步驟
+## Steps
 
-### 0. 建目錄
+### 0. Create the directory
 
 ```bash
 mkdir -p app/products/tests
 touch app/products/__init__.py app/products/tests/__init__.py
 ```
 
-只建需要的檔案。`external_services.py`、`utils.py` 等真的要用時才建立，不要「先放著以後用」。
+Create only the files you need. `external_services.py`, `utils.py`, etc. are created when actually
+used, never "for later".
 
-### 1. Model（`models.py`）
+### 1. Model (`models.py`)
 
 ```python
 """Product ORM models."""
@@ -40,26 +45,29 @@ from app.common.db.database import Base
 class Product(Base):
     """Product database model."""
 
-    __tablename__ = "products"  # snake_case 複數
+    __tablename__ = "products"  # snake_case plural
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100), index=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 ```
 
-- 時間欄位一律 `DateTime(timezone=True)`。
-- **不要寫 `class Meta`**（SQLAlchemy 會忽略）。多欄位 index 用 `__table_args__ = (Index("ix_products_owner_created", "owner_id", "created_at"),)`。
-- FK 寫明 `ForeignKey(..., ondelete=...)`；index 對應實際查詢路徑，不建低選擇性的單欄位 index（例如裸 boolean）。
+- Time columns are always `DateTime(timezone=True)`.
+- **No `class Meta`** (SQLAlchemy ignores it). Multi-column index:
+  `__table_args__ = (Index("ix_products_owner_created", "owner_id", "created_at"),)`.
+- FKs state `ForeignKey(..., ondelete=...)`; indexes match real query paths — no low-selectivity
+  single-column index (e.g. a bare boolean).
 
-接著產生 migration（需先 `make up`）：
+Then generate the migration (needs `make up` first):
 
 ```bash
 make makemigrations MSG="Add products"
 ```
 
-**一定要 review 產出的檔案**（autogenerate 會漏自訂 index／constraint）。規則見 `docs/database-migrations.md`。然後 `make migrate`。
+**Always review the generated file** (autogenerate misses custom indexes/constraints). Rules are in
+`docs/database-migrations.md`. Then `make migrate`.
 
-### 2. Schema（`schemas.py`）
+### 2. Schema (`schemas.py`)
 
 ```python
 """Product Pydantic schemas for request/response."""
@@ -91,23 +99,27 @@ class ProductRead(BaseModel):
     created_at: datetime
 ```
 
-`XxxRead` 只列要對外的欄位——沒列的欄位（例如 hash、內部狀態）就不會出現在回應裡。
+`XxxRead` lists only the fields meant for callers — an unlisted field (hash, internal state) never
+appears in a response.
 
-### 3. Service（`services.py`）＋ 測試
+### 3. Service (`services.py`) + tests
 
-照 `app/users/services.py`：
+Follow `app/users/services.py`:
 
-- `class ProductService:`，`__init__(self, db: Session)`。
-- 列表查詢一定 `order_by()`（通常 `Product.id.desc()`），再 `offset/limit`。
-- 找不到 → `NotFoundException`；名稱重複 → `ConflictException`；輸入不合業務規則 → `ValidationException`。
-- 前端需要分辨的失敗帶專屬 `reason`：先在 `ErrorCode` 加碼，再 `ConflictException(msg, reason=ErrorCode.XXX_NAME_TAKEN)`（參考 `app/users/services.py`）。
-- 寫入：`add` → `commit` → `refresh`，包在 `try / except Exception: rollback; logger.exception(...); raise`。
-- log 前綴 `[Service]`，帶資源 ID。
+- `class ProductService:` with `__init__(self, db: Session)`.
+- List queries always `order_by()` (usually `Product.id.desc()`), then `offset/limit`.
+- Not found → `NotFoundException`; duplicate name → `ConflictException`; input violating a business
+  rule → `ValidationException`.
+- Failures the frontend must distinguish carry their own `reason`: add the code to `ErrorCode` first, then
+  `ConflictException(msg, reason=ErrorCode.XXX_NAME_TAKEN)` (see `app/users/services.py`).
+- Writes: `add` → `commit` → `refresh`, wrapped in `try / except Exception: rollback; logger.exception(...); raise`.
+- Log prefix `[Service]`, with the resource ID.
 
-**關卡**：在 `app/products/tests/test_services.py` 為每條業務規則、每個例外分支寫測試（照 `app/users/tests/test_services.py`，用根目錄 `conftest.py` 的 `db_session` fixture），
-`make test TEST=app/products/tests/test_services.py` 通過才進下一步。
+**Gate**: in `app/products/tests/test_services.py`, write a test for every business rule and exception
+branch (follow `app/users/tests/test_services.py`, using the `db_session` fixture from the root
+`conftest.py`). `make test TEST=app/products/tests/test_services.py` must pass before the next step.
 
-### 4. Views（`views.py`）＋ 測試
+### 4. Views (`views.py`) + tests
 
 ```python
 """Product API routes."""
@@ -122,7 +134,7 @@ from app.common.schemas import BaseResponse
 from app.products.schemas import ProductCreate, ProductRead
 from app.products.services import ProductService
 
-router = APIRouter(prefix="/products", tags=["products"])  # kebab-case 複數名詞
+router = APIRouter(prefix="/products", tags=["products"])  # kebab-case plural noun
 
 
 def get_product_service(db: Annotated[Session, Depends(get_db)]) -> ProductService:
@@ -153,14 +165,15 @@ def delete_product(product_id: int, service: Annotated[ProductService, Depends(g
     return BaseResponse()
 ```
 
-- `get_db` 從 `app.common.db.database` import，**不要在 views 裡另外定義**。
-- ID 用路徑參數（`/{product_id}`），只有動態篩選才用 query。
-- views 不寫 try/except、不手寫錯誤回應——raise 交給 `error_handler.py`。
+- Import `get_db` from `app.common.db.database`; **never redefine it in views**.
+- IDs are path params (`/{product_id}`); query params are for dynamic filters only.
+- Views have no try/except and no hand-built error responses — raise and let `error_handler.py` convert.
 
-**關卡**：`app/products/tests/test_views.py`（照 `app/users/tests/test_views.py`，用 `client` fixture）。
-每個端點驗**狀態碼與 `BaseResponse` body**；寫入後再透過 API 讀回確認；涵蓋 404、409、422。
+**Gate**: `app/products/tests/test_views.py` (follow `app/users/tests/test_views.py`, using the `client`
+fixture). Assert the **status code and `BaseResponse` body** of every endpoint; after a write, read it
+back through the API; cover 404, 409, 422.
 
-### 5. Admin（`admin.py`）
+### 5. Admin (`admin.py`)
 
 ```python
 """Admin view for Product model."""
@@ -179,14 +192,14 @@ class ProductAdmin(ModelView, model=Product):
     column_list = [Product.id, Product.name, Product.created_at]
     column_searchable_list = [Product.name]
     column_sortable_list = [Product.id, Product.created_at]
-    form_columns = [Product.name]  # 時間戳、id 不放進表單
+    form_columns = [Product.name]  # no timestamps or id in the form
 ```
 
-機密欄位（token、hash）不放進 `column_list` 與 `form_columns`。
+Secret fields (token, hash) stay out of `column_list` and `form_columns`.
 
-## 註冊（每一項都要做）
+## Registration (do every item)
 
-1. `app/main.py`：
+1. `app/main.py`:
    ```python
    from app.products import views as product_views
    from app.products.admin import ProductAdmin
@@ -194,11 +207,12 @@ class ProductAdmin(ModelView, model=Product):
    admin.add_view(ProductAdmin)
    app.include_router(product_views.router, prefix="/api/v1")
    ```
-2. `alembic/env.py`：`from app.products.models import Product  # noqa`
+2. `alembic/env.py`: `from app.products.models import Product  # noqa`
 
-## 需要呼叫第三方 API 時（`external_services.py`）
+## When a third-party API is needed (`external_services.py`)
 
-`httpx` 只能在這個檔案 import（ruff `TID251`）。每個呼叫都要 timeout、`[External]` log、失敗轉成 `ExternalAPIException`：
+`httpx` may be imported only in this file (ruff `TID251`). Every call needs a timeout, `[External]`
+logs, and failures converted to `ExternalAPIException`:
 
 ```python
 """Third-party API calls for products."""
@@ -224,28 +238,31 @@ def fetch_price(sku: str) -> dict:
     return resp.json()
 ```
 
-由 service 呼叫，不要從 views 直接呼叫。測試用 `monkeypatch` 替換這個函式，**不要打真實 API**。
+Call it from the service, never directly from views. Tests replace the function with `monkeypatch`;
+**never call the real API**.
 
-## 完成清單
+## Completion checklist
 
-每一項用三種狀態之一回報，沒實際跑過的不要打勾：
-`[x]` 已驗證 · `[ ]` 未完成 · `[ ] ⛔ <原因>` 無法驗證（例如 Docker 沒開）。
+Report each item in one of three states; never tick something you did not run:
+`[x]` verified · `[ ]` not done · `[ ] ⛔ <reason>` could not verify (e.g. Docker not running).
 
-- [ ] migration 已產生、已 review、`make migrate` 成功
-- [ ] model 已加進 `alembic/env.py`
-- [ ] router 已 `include_router`；admin 已 `add_view`
-- [ ] service 測試通過（在寫 views 之前）
-- [ ] endpoint 測試通過，含 404／409／422 與 `BaseResponse` body
-- [ ] 沒有建立用不到的空檔案
-- [ ] **check** skill 通過
+- [ ] Migration generated, reviewed, `make migrate` succeeded
+- [ ] Model added to `alembic/env.py`
+- [ ] Router added with `include_router`; admin added with `add_view`
+- [ ] Service tests pass (before writing views)
+- [ ] Endpoint tests pass, including 404 / 409 / 422 and the `BaseResponse` body
+- [ ] No unused empty files created
+- [ ] The **check** skill passes
 
-## 常見陷阱
+## Common pitfalls
 
-- 忘了 `alembic/env.py` 的 import：autogenerate 看不到新 model，產生空的 migration；表已存在時甚至會產生 `drop_table`。
-- 忘了 `include_router`：每個端點都回 404。
-- 回傳 ORM 物件而不是 `BaseResponse(data=...)`：response validation 失敗變 500。
-- 名稱重複丟 `ValidationException`（400）：應該是 `ConflictException`（409）。
-- 列表沒 `order_by()`：分頁結果每次不同。
-- 時間欄位沒加 `timezone=True`：存成 `timestamp without time zone`，違反「時間一律 UTC」。
-- 在既有資料表新增 `NOT NULL` 欄位只用一個 migration：部署期間舊版程式碼還在寫入，不會填這個欄位。要分 nullable → backfill → 加約束。
-- `make makemigrations` 跑在 app 容器內：要先 `make up`，且 `.env.local` 存在。
+- Missing import in `alembic/env.py`: autogenerate cannot see the new model and emits an empty
+  migration — or a `drop_table` when the table already exists.
+- Missing `include_router`: every endpoint returns 404.
+- Returning an ORM object instead of `BaseResponse(data=...)`: response validation fails with a 500.
+- Raising `ValidationException` (400) for a duplicate name: it should be `ConflictException` (409).
+- A list without `order_by()`: pagination results differ on every call.
+- A time column without `timezone=True`: stored as `timestamp without time zone`, breaking "time is always UTC".
+- Adding a `NOT NULL` column to an existing table in one migration: old code is still writing during the
+  deploy and does not fill it. Split into nullable → backfill → add constraint.
+- `make makemigrations` runs inside the app container: `make up` first, and `.env.local` must exist.
