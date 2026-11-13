@@ -25,6 +25,7 @@ def _config(**overrides):
         "admin_password": "a-real-password",
         "db_password": "a-real-db-password",
         "redis_password": "a-real-redis-password",
+        "cors_origins": ["https://app.example.com"],
     }
     return Config(**{**base, **overrides})
 
@@ -58,6 +59,36 @@ class TestSecurityIssues:
         issues = _config(db_password="postgres", redis_password="redis_password").security_issues()
         assert any("DB_PASSWORD" in i for i in issues)
         assert any("REDIS_PASSWORD" in i for i in issues)
+
+    def test_wildcard_or_http_cors_origin_is_flagged(self):
+        assert any("CORS_ORIGINS" in i for i in _config(cors_origins=["*"]).security_issues())
+        assert any("https://" in i for i in _config(cors_origins=["http://app.example.com"]).security_issues())
+
+    def test_cors_origins_parsed_from_comma_separated_env(self, monkeypatch):
+        from app.common.core.config import Config
+
+        monkeypatch.setenv("CORS_ORIGINS", "https://a.example.com, https://b.example.com")
+
+        assert Config().cors_origins == ["https://a.example.com", "https://b.example.com"]
+
+    def test_enabled_optional_features_require_their_secrets(self):
+        issues = _config(
+            google_oauth_client_id="id.apps.googleusercontent.com",
+            google_oauth_client_secret="",
+            smtp_host="smtp.example.com",
+            smtp_password="CHANGEME",
+            line_channel_access_token="token",
+            line_channel_secret="",
+            llm_providers=["anthropic", "bogus"],
+            storage_backend="s3",
+        ).security_issues()
+
+        for name in ("GOOGLE_OAUTH_CLIENT_SECRET", "FRONTEND_BASE_URL", "SMTP_PASSWORD", "LINE_CHANNEL_SECRET",
+                     "ANTHROPIC_API_KEY", "bogus", "S3_BUCKET"):  # fmt: skip
+            assert any(name in i for i in issues), name
+
+    def test_disabled_optional_features_are_not_checked(self):
+        assert _config(google_oauth_client_secret="", smtp_password="", llm_providers=[]).security_issues() == []
 
 
 class TestEnforceSecureSettings:

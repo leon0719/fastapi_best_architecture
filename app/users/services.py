@@ -3,6 +3,7 @@
 from loguru import logger
 from sqlalchemy.orm import Session
 
+from app.audit.services import record_audit, snapshot
 from app.common.exceptions import ConflictException, ErrorCode, NotFoundException
 from app.users.models import User
 from app.users.schemas import UserCreate, UserUpdate
@@ -54,12 +55,13 @@ class UserService:
         logger.info(f"[Service] User retrieved - user_id: {user_id}, name: {user.name}")
         return user
 
-    def create_user(self, user_data: UserCreate) -> User:
+    def create_user(self, user_data: UserCreate, actor: str | None = None) -> User:
         """
         Create a new user.
 
         Args:
             user_data: User creation data
+            actor: Who did it, for the audit log (e.g. "user:3")
 
         Returns:
             Created user
@@ -80,6 +82,16 @@ class UserService:
         try:
             user = User(name=user_data.name)
             self.db.add(user)
+            self.db.flush()  # 取得 id 給稽核紀錄;稽核與資料在同一個交易 commit
+            record_audit(
+                self.db,
+                action="create",
+                target_type="User",
+                target_id=user.id,
+                target_label=str(user),
+                after=snapshot(user),
+                actor=actor,
+            )
             self.db.commit()
             self.db.refresh(user)
             logger.info(f"[Service] User created successfully - user_id: {user.id}, name: {user.name}")
@@ -89,13 +101,14 @@ class UserService:
             logger.exception(f"[Service] Failed to create user - name: {user_data.name}, error: {e}")
             raise
 
-    def update_user(self, user_id: int, user_data: UserUpdate) -> User:
+    def update_user(self, user_id: int, user_data: UserUpdate, actor: str | None = None) -> User:
         """
         Update user information.
 
         Args:
             user_id: User ID to update
             user_data: Updated user data
+            actor: Who did it, for the audit log
 
         Returns:
             Updated user
@@ -117,7 +130,18 @@ class UserService:
             )
 
         try:
+            before = snapshot(user)
             user.name = user_data.name
+            record_audit(
+                self.db,
+                action="update",
+                target_type="User",
+                target_id=user.id,
+                target_label=str(user),
+                before=before,
+                after=snapshot(user),
+                actor=actor,
+            )
             self.db.commit()
             self.db.refresh(user)
             logger.info(f"[Service] User updated successfully - user_id: {user.id}, name: {user.name}")
@@ -127,12 +151,13 @@ class UserService:
             logger.exception(f"[Service] Failed to update user - user_id: {user_id}, error: {e}")
             raise
 
-    def delete_user(self, user_id: int) -> bool:
+    def delete_user(self, user_id: int, actor: str | None = None) -> bool:
         """
         Delete a user.
 
         Args:
             user_id: User ID to delete
+            actor: Who did it, for the audit log
 
         Returns:
             True if deleted
@@ -145,6 +170,15 @@ class UserService:
         user = self.get_user(user_id)  # Raises NotFoundException if not found
 
         try:
+            record_audit(
+                self.db,
+                action="delete",
+                target_type="User",
+                target_id=user.id,
+                target_label=str(user),
+                before=snapshot(user),
+                actor=actor,
+            )
             self.db.delete(user)
             self.db.commit()
             logger.info(f"[Service] User deleted successfully - user_id: {user_id}")
@@ -153,3 +187,10 @@ class UserService:
             self.db.rollback()
             logger.exception(f"[Service] Failed to delete user - user_id: {user_id}, error: {e}")
             raise
+
+    def export_rows(self) -> tuple[list[str], list[list[str | int | None]]]:
+        """匯出用的表頭與資料列(依 id 排序)。"""
+        users = self.db.query(User).order_by(User.id).all()
+        logger.info(f"[Service] Exporting users - total: {len(users)}")
+        headers = ["ID", "名稱", "Email", "角色", "啟用"]
+        return headers, [[u.id, u.name, u.email, u.role, "是" if u.is_active else "否"] for u in users]

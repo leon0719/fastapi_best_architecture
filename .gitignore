@@ -35,3 +35,8 @@ htmlcov/
 # Claude Code: worktrees and personal instructions stay local
 .claude/worktrees/
 CLAUDE.local.md
+
+# 本機檔案儲存(STORAGE_BACKEND=local)與壓測帳號
+media/
+perf/.perf_users.json
+backups/

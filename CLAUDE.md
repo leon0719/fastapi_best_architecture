@@ -32,14 +32,22 @@ Never run these yourself — stop and hand the exact command to the user
 - `git push` (any branch), force-push, rewriting published history
 - `make docker-clean` (wipes the local DB volume)
 - Deleting or rewriting migrations that may already be applied anywhere
-- Calling real third-party APIs / webhooks, sending real email
+- Calling real third-party APIs / webhooks, sending real email (incl. `make import-holidays`, real LLM calls)
 
 ## Architecture
 
 ```
-Client → RequestLoggingMiddleware → router (app/<name>/views.py) → services.py → SQLAlchemy Session → PostgreSQL
+Client → CORS → RequestLoggingMiddleware (X-Request-ID, [API] log) → router (app/<name>/views.py)
+       → auth dependency (current_user / require_role) → services.py → SQLAlchemy Session → PostgreSQL
                                           └─ any exception → app/common/middleware/error_handler.py → BaseResponse
+Background: app/jobs/scheduler.py (PeriodicTask, Redis lock) · app/jobs/services.py (long jobs in Redis)
 ```
+
+- **Every new endpoint decides its auth**: `Depends(current_user)` or `require_role(Role.X)` (`app/auth/dependencies.py`).
+  Public endpoints are deliberate exceptions (health, login, webhooks with their own signature check). "Only my own
+  rows" is a service query filter, and a miss is 404, not 403.
+- **Notifications go through the outbox** (`NotificationService.enqueue_*`, same transaction); never call SMTP/LINE inside a request.
+- **Third-party calls** in `external_services.py` use the `app/common/core/retry.py` decorators; only retry transport errors.
 
 ### File responsibilities
 
@@ -99,8 +107,9 @@ To change any of these, raise it separately; never fold it into an unrelated tas
   4xx situations → `logger.warning`; unexpected errors → `logger.exception` (includes the stack trace).
 - Every log line carries context: resource ID (`user_id: {id}`), counts (`total: {n}`), duration (`duration: {d:.3f}s`).
   **Never log passwords, keys, or tokens** (mask as `token[:10]...` if unavoidable).
-- `except Exception` is legitimate in two places only: a service rolling back a failed write and
-  re-raising, and degrading when cache/health checks fail. Nowhere else swallows exceptions.
+- `except Exception` is legitimate in three places only: a service rolling back a failed write and
+  re-raising; degrading when cache/health checks fail; and the outermost loop of background work (scheduler tick,
+  job runner, LLM usage recording) that logs with `logger.exception` and records the failure. Nowhere else swallows exceptions.
 - `# noqa` / `# type: ignore` must name the exact rule and give a reason.
 
 ## Database
@@ -142,3 +151,11 @@ To change any of these, raise it separately; never fold it into an unrelated tas
 - `docs/database-migrations.md` — before changing a model or writing a migration
 - `docs/redis-cache.md` — before using the Redis cache
 - `docs/security-incident-2026-07.md` — before touching `.env`, secrets, or admin login
+- `docs/auth.md` — login flow, roles, rate limits
+- `docs/audit.md` — audit trail (`AdminAuditMixin`, `record_audit`)
+- `docs/background-tasks.md` — scheduler, long jobs, retry decorators, Taiwan working days
+- `docs/notifications.md` — email / LINE / outbox
+- `docs/storage-and-exports.md` — uploads (S3 / local), xlsx / PDF / ZIP downloads
+- `docs/llm.md` — LLM providers, fallback, cost tracking
+- `docs/observability.md` — request ID, Sentry, CORS, startup security check
+- `docs/deployment.md` — prod compose, nginx, graceful shutdown, backup/restore, CD

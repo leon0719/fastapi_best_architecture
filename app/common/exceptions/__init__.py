@@ -19,6 +19,10 @@ class ErrorCode(StrEnum):
     CONFLICT = "conflict"
     EXTERNAL_API_ERROR = "external_api_error"
     INTERNAL_ERROR = "internal_error"
+    RATE_LIMITED = "rate_limited"
+    INVALID_SIGNATURE = "invalid_signature"
+    FILE_TOO_LARGE = "file_too_large"
+    UNSUPPORTED_FILE_TYPE = "unsupported_file_type"
     USER_NAME_TAKEN = "user_name_taken"
     CHATBOT_NAME_TAKEN = "chatbot_name_taken"
 
@@ -69,3 +73,7 @@ class ForbiddenException(AppException):
 
 class ExternalAPIException(AppException):
     status_code, reason, default_message = 502, ErrorCode.EXTERNAL_API_ERROR, "External API error"
+
+
+class RateLimitedException(AppException):
+    status_code, reason, default_message = 429, ErrorCode.RATE_LIMITED, "Too many requests, please try again later"

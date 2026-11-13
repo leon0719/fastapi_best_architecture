@@ -1,12 +1,13 @@
 """Admin view for User model."""
 
-from sqladmin import ModelView
+from wtforms import SelectField
 
-from app.users.models import User
+from app.audit.admin import AdminAuditMixin
+from app.users.models import Role, User
 
 
-class UserAdmin(ModelView, model=User):
-    """Admin view for managing users."""
+class UserAdmin(AdminAuditMixin, model=User):
+    """Admin view for managing users. 新增/修改/刪除會寫進稽核軌跡(AdminAuditMixin)。"""
 
     # Model metadata
     name = "User"
@@ -14,12 +15,14 @@ class UserAdmin(ModelView, model=User):
     icon = "fa-solid fa-user"
 
     # Column configuration
-    column_list = [User.id, User.name]
-    column_searchable_list = [User.name]
-    column_sortable_list = [User.id, User.name]
+    column_list = [User.id, User.name, User.email, User.role, User.is_active, User.created_at]
+    column_searchable_list = [User.name, User.email]
+    column_sortable_list = [User.id, User.name, User.created_at]
 
-    # Form configuration
-    form_columns = [User.name]
+    # Form configuration:角色用下拉選單,只能選 Role 定義的值
+    form_columns = [User.name, User.email, User.role, User.is_active]
+    form_overrides = {"role": SelectField}
+    form_args = {"role": {"choices": [(r.value, r.value) for r in Role], "default": Role.USER.value}}
 
     # Permissions
     can_create = True

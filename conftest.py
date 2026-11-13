@@ -26,6 +26,14 @@ _TEST_ENV = {
     "ADMIN_PASSWORD": "test-only-password",
     "DB_PASSWORD": "test-only-db-password",
     "REDIS_PASSWORD": "test-only-redis-password",
+    # 測試沒有 Redis:限速計數放記憶體(每個測試前由 client fixture 清空)
+    "RATE_LIMIT_STORAGE_URI": "memory://",
+    # 不讓開發者本機 .env 的第三方設定漏進測試(測試絕不呼叫真實第三方)
+    "SMTP_HOST": "",
+    "LINE_CHANNEL_ACCESS_TOKEN": "",
+    "LLM_PROVIDERS": "",
+    "SENTRY_DSN": "",
+    "STORAGE_BACKEND": "local",
 }
 
 # setdefault:真實環境變數優先,才不會蓋掉使用者刻意指定的測試設定。
@@ -53,13 +61,61 @@ def db_session():
 
 
 @pytest.fixture()
+def session_factory(db_session, monkeypatch):
+    """背景工作(排程、長任務、LLM 記帳)自己開 session 時,開到同一個測試 DB。"""
+    from app.common.db import database
+
+    factory = sessionmaker(bind=db_session.get_bind(), autoflush=False)
+    # 換 SessionLocal 而非 get_session_factory:後者執行時才讀模組變數,
+    # `from ... import get_session_factory` 的呼叫端也會拿到測試 factory
+    monkeypatch.setattr(database, "SessionLocal", factory)
+    return factory
+
+
+@pytest.fixture()
+def fake_redis():
+    """記憶體版 Redis(fakeredis),行為與 redis-py 相同;測試不需要真的 Redis。"""
+    import fakeredis
+
+    return fakeredis.FakeRedis(decode_responses=True)
+
+
+@pytest.fixture()
 def client(db_session):
     """TestClient whose `get_db` yields the test session (no lifespan, no real DB/Redis)."""
+    from app.common.core.rate_limit import limiter
     from app.common.db.database import get_db
     from app.main import app as fastapi_app
 
+    limiter.reset()
     fastapi_app.dependency_overrides[get_db] = lambda: db_session
     try:
         yield TestClient(fastapi_app)
     finally:
         fastapi_app.dependency_overrides.clear()
+
+
+@pytest.fixture()
+def make_user(db_session):
+    """建立使用者並發一個 session token,回傳 (user, Authorization headers)。"""
+    from app.auth.dependencies import get_google_client
+    from app.auth.services import AuthService
+    from app.users.models import Role, User
+
+    def _make(role: str = Role.USER, name: str | None = None, email: str | None = None):
+        count = db_session.query(User).count()
+        user = User(name=name or f"user{count}", email=email or f"user{count}@example.com", role=role)
+        db_session.add(user)
+        db_session.commit()
+        token = AuthService(db_session, get_google_client()).issue_session(user.id)
+        return user, {"Authorization": f"Bearer {token}"}
+
+    return _make
+
+
+@pytest.fixture()
+def admin_headers(make_user):
+    """admin 的 Authorization headers(呼叫受 require_role(Role.ADMIN) 保護的端點用)。"""
+    from app.users.models import Role
+
+    return make_user(Role.ADMIN, name="admin")[1]

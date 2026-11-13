@@ -3,7 +3,7 @@ Redis connection management and utility functions.
 
 This module provides:
 - Redis connection pool management
-- Automatic retry with backoff
+- Automatic retry (tenacity, app/common/core/retry.py)
 - Cache decorator for functions
 - Helper methods for common Redis operations
 """
@@ -13,12 +13,12 @@ from collections.abc import Callable
 from functools import wraps
 from typing import Any, cast
 
-import backoff
 import redis
 from loguru import logger
 from redis.exceptions import ConnectionError, TimeoutError
 
 from app.common.core.config import config
+from app.common.core.retry import retry_or_default
 
 # Global Redis connection pool
 _redis_pool: redis.ConnectionPool | None = None
@@ -88,25 +88,23 @@ def close_redis():
         logger.info("[Redis] Connection pool closed")
 
 
-@backoff.on_exception(
-    backoff.expo,
-    (ConnectionError, TimeoutError),
-    max_tries=3,
-    max_time=10,
-)
+@retry_or_default("Redis", default=False, retry_on=(ConnectionError, TimeoutError), attempts=3, max_seconds=10)
+def _ping() -> bool:
+    """連線/逾時錯誤由 tenacity 重試(指數退避,最多 3 次、10 秒);用完回 False。"""
+    return bool(get_redis().ping())
+
+
 def ping_redis() -> bool:
     """
     Check Redis connection health with automatic retry.
 
     Returns:
-        True if connected, False otherwise
-
-    Raises:
-        ConnectionError: If connection fails after retries
+        True if connected, False otherwise (never raises; health checks degrade instead)
     """
     try:
-        redis_client = get_redis()
-        return bool(redis_client.ping())
+        return _ping()
+    # 非連線錯誤(例如 ResponseError)不重試,記錄後降級。
+    # 註:redis-py 的 AuthenticationError 是 ConnectionError 子類,密碼錯也會重試 3 次才回 False。
     except Exception as e:
         logger.exception(f"[Redis] Health check failed - error: {e}")
         return False

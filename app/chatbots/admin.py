@@ -1,11 +1,10 @@
 """Admin view for Chatbot model."""
 
-from sqladmin import ModelView
-
+from app.audit.admin import AdminAuditMixin
 from app.chatbots.models import Chatbot
 
 
-class ChatbotAdmin(ModelView, model=Chatbot):
+class ChatbotAdmin(AdminAuditMixin, model=Chatbot):
     """Admin view for managing chatbots."""
 
     # Model metadata

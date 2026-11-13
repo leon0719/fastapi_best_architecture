@@ -28,6 +28,8 @@ The reference implementation is `app/users`; any difference in shape needs a rea
 - [ ] Status codes mean what they say: 201 created, 404 not found, 409 duplicate/conflict, 400 business rule violated, 422 left to the framework.
 - [ ] `XxxRead` leaks no internal field (hash, token, internal state).
 - [ ] Routes are kebab-case plural nouns, IDs are path params; lists cap `skip` / `limit`.
+- [ ] Every endpoint has a deliberate auth decision (`current_user` / `require_role`); per-user rows are filtered in
+      the service and another user's row is 404; login-like endpoints are rate limited.
 
 ## Database
 
@@ -39,7 +41,8 @@ The reference implementation is `app/users`; any difference in shape needs a rea
 - [ ] No `class Meta`; indexes match real query paths.
 - [ ] Time columns are `DateTime(timezone=True)`; no naive datetimes in Python.
 - [ ] List queries have `order_by()`; no N+1 when reading relations in a loop (`selectinload` / `joinedload` when needed).
-- [ ] Multi-step writes share one transaction and roll back on failure.
+- [ ] Multi-step writes share one transaction and roll back on failure; `record_audit` / outbox `enqueue_*` run before that commit.
+- [ ] New SQLAdmin views of business data use `AdminAuditMixin`.
 
 ## Logging and secrets
 
@@ -52,5 +55,5 @@ The reference implementation is `app/users`; any difference in shape needs a rea
 
 - [ ] Every business rule and exception branch of a new service is tested; new endpoints assert the status
       code and `BaseResponse` body, including 404 / 409 / 422.
-- [ ] Tests never call a real third-party API.
+- [ ] Tests never call a real third-party API (Google → `FakeGoogle`, mail/LINE → fakes, LLM → `FakeProvider`, Redis → `fake_redis`).
 - [ ] The **check** skill passes; no blanket `# noqa` / `# type: ignore`.

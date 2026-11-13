@@ -12,6 +12,11 @@ from app.common.db.database import Base
 # Import all models so Alembic can detect them
 from app.users.models import User  # noqa
 from app.chatbots.models import Chatbot  # noqa
+from app.auth.models import AuthToken  # noqa
+from app.audit.models import AuditLog  # noqa
+from app.holidays.models import Holiday  # noqa
+from app.notifications.models import OutboxNotification  # noqa
+from app.llm.models import LlmUsage  # noqa
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

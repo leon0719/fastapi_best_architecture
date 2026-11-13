@@ -20,6 +20,9 @@ make up                            # 啟動 app + db + redis（hot-reload）
 make migrate                       # 第一次啟動時建立資料表
 ```
 
+第一個 admin：在 `/admin` 的 Users 建一筆（填 email、role 選 `admin`），設定好 `GOOGLE_OAUTH_*` 後用該 email 登入。
+`/api/v1/users` 只有 admin 能呼叫；登入流程見 [docs/auth.md](./docs/auth.md)。
+
 | 服務 | 網址 |
 |---|---|
 | API | http://localhost:8000 |
@@ -42,17 +45,27 @@ make secrets-scan / audit / sast       # 與 CI 相同的安全檢查
 
 ```
 app/
-├── main.py                 # 進入點：middleware、router、admin 註冊、健康檢查
+├── main.py                 # 進入點：middleware、router、admin 註冊、排程、健康檢查
 ├── common/
-│   ├── core/               # config（pydantic-settings）、log_config（loguru）、redis、admin 登入
-│   ├── db/database.py      # engine、SessionLocal、Base、get_db
+│   ├── core/               # config、log_config（loguru + Sentry）、redis、rate_limit、retry、request_context、admin 登入
+│   ├── db/database.py      # engine、SessionLocal、Base、get_db、get_session_factory
 │   ├── exceptions/         # AppException 與各 HTTP 錯誤
-│   ├── middleware/         # 全域錯誤處理、請求 log
+│   ├── middleware/         # 全域錯誤處理、request ID + 請求 log
+│   ├── storage/            # S3 / 本機檔案儲存、上傳檢查
+│   ├── exports.py          # xlsx / 中文 PDF / ZIP 下載
 │   └── schemas.py          # BaseResponse[T]（統一回應格式）
-├── users/                  # 參考實作：新功能照抄它的形狀
+├── users/                  # 參考實作：新功能照抄它的形狀（含角色、稽核、匯出範例）
+├── auth/                   # Google OAuth + PKCE 登入、current_user、require_role
+├── audit/                  # 稽核軌跡（AdminAuditMixin、record_audit）
+├── jobs/                   # 輕量排程（PeriodicTask）與長任務（Redis 狀態）
+├── notifications/          # Email、LINE、outbox 重送
+├── holidays/               # 台灣工作日
+├── llm/                    # LLM fallback chain 與用量（選用）
 └── chatbots/
 alembic/                    # migration
-docs/                       # 特定主題的規範（migration、快取、資安事件）
+scripts/                    # 營運腳本（匯入假日、壓測帳號）
+nginx/ · db_backup/ · perf/ # 站台設定範例、備份 sidecar、Locust 壓測
+docs/                       # 特定主題的規範（見 CLAUDE.md 的 Docs 清單）
 .claude/                    # AI 協作設定：skills 與權限
 ```
 
@@ -81,7 +94,9 @@ docs/                       # 特定主題的規範（migration、快取、資�
 - Console：DEBUG 以上（`make logs-app`）
 - `logs/app.log`：INFO 以上，10MB 輪替、保留 10 份
 - `logs/error.log`：ERROR 以上，含完整 stack trace
-- 每個 API 請求由 `RequestLoggingMiddleware` 自動記一行 `[API] POST /api/v1/users - status: 201, duration: 0.032s`
+- 每一行都帶 request ID（`X-Request-ID`，回應 header 也有）；每個 API 請求由 `RequestLoggingMiddleware` 自動記一行
+  `[API] POST /api/v1/users - status: 201, duration: 0.032s, user_id: 1`
+- 設 `SENTRY_DSN` 後 error 以上送 Sentry（已去識別化，見 `docs/observability.md`）
 
 ## 和 AI 一起開發
 
@@ -103,13 +118,10 @@ docs/                       # 特定主題的規範（migration、快取、資�
 ## 正式環境
 
 ```bash
-make prod-build && make prod-up    # 使用 docker-compose.yml 與 .env.prod
+make prod-deploy    # 備份 → build → migrate → up（使用 docker-compose.yml 與 .env.prod）
 ```
 
-部署前確認 `.env.prod` 已填妥（`DEBUG=False` 時不安全的設定會擋下啟動）。容器起來後套用 migration：
-
-```bash
-docker compose --env-file .env.prod -f docker-compose.yml exec app uv run alembic upgrade head
-```
+部署前確認 `.env.prod` 已填妥（`DEBUG=False` 時不安全的設定會擋下啟動）。nginx、備份還原、GitHub Actions 自動部署
+（預設關閉，`DEPLOY_ENABLED=true` 才啟用）見 [docs/deployment.md](./docs/deployment.md)。
 
 prod 操作一律由人執行；AI 被 `.claude/settings.json` 禁止執行 `make prod-*`。

@@ -1,3 +1,12 @@
+# 正式環境。只能由人操作(make prod-*),見 CLAUDE.md 的 Human-only operations。
+
+# 所有服務共用的 log 輪替:json-file 預設不輪替,磁碟會被 log 塞滿
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   db:
     image: postgres:16-alpine
@@ -14,6 +23,7 @@ services:
       timeout: 5s
       retries: 5
     restart: always
+    logging: *default-logging
 
   redis:
     image: redis:7-alpine
@@ -27,6 +37,7 @@ services:
       timeout: 5s
       retries: 5
     restart: always
+    logging: *default-logging
 
   app:
     container_name: fastapi-best-architecture
@@ -34,7 +45,9 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "8000:8000"
+      # 只綁 loopback,由 host nginx 反向代理(nginx/app.conf),不對公網開放。
+      # APP_PORT 讀自 .env.prod,需與 nginx 的 proxy_pass port 一致。
+      - "127.0.0.1:${APP_PORT:-8000}:8000"
     env_file:
       - .env.prod
     depends_on:
@@ -43,11 +56,36 @@ services:
       redis:
         condition: service_healthy
     restart: always
+    # SIGTERM 後等多久才 SIGKILL;要比 uvicorn 的 --timeout-graceful-shutdown(GRACEFUL_TIMEOUT,預設 25 秒)長
+    stop_grace_period: 30s
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8000/health/live" ]
       interval: 30s
       timeout: 10s
       retries: 3
+    logging: *default-logging
+
+  # 每日異地備份到 S3(見 db_backup/backup.sh)。BACKUP_S3_URI 未設定時不做事。
+  # 不帶 env_file:S3 權限優先來自主機的 instance role,容器裡沒有 app 的其他機密。
+  backup:
+    build:
+      context: ./db_backup
+    container_name: fastapi-backup
+    restart: always
+    environment:
+      PGHOST: db
+      PGUSER: ${DB_USER}
+      PGPASSWORD: ${DB_PASSWORD}
+      PGDATABASE: ${DB_NAME}
+      BACKUP_S3_URI: ${BACKUP_S3_URI:-}
+      AWS_DEFAULT_REGION: ${AWS_REGION:-ap-northeast-1}
+      # 非 EC2 主機才需要;留空 = 用 instance role
+      AWS_ACCESS_KEY_ID: ${BACKUP_AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${BACKUP_AWS_SECRET_ACCESS_KEY:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    logging: *default-logging
 
 volumes:
   postgres-data:

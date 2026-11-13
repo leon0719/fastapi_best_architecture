@@ -9,8 +9,10 @@ from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from loguru import logger
+from slowapi.errors import RateLimitExceeded
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.common.core.request_context import REQUEST_ID_HEADER, get_request_id
 from app.common.exceptions import AppException, ErrorCode
 from app.common.schemas import BaseResponse, ErrorResponse
 
@@ -57,8 +59,26 @@ def setup_exception_handlers(app: FastAPI) -> None:
         reason = ErrorCode.NOT_FOUND if exc.status_code == status.HTTP_404_NOT_FOUND else None
         return _error_response(exc.status_code, str(exc.detail), reason, headers=exc.headers)
 
+    @app.exception_handler(RateLimitExceeded)
+    async def rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+        """slowapi 超過速率 → 429 BaseResponse(不回傳限制細節以外的資訊)。"""
+        logger.warning(f"[Error] 429 rate limited - path: {request.url.path}, limit: {exc.detail}")
+        return _error_response(
+            status.HTTP_429_TOO_MANY_REQUESTS, "Too many requests, please try again later", ErrorCode.RATE_LIMITED
+        )
+
     @app.exception_handler(Exception)
     async def general_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-        """Unexpected exceptions: log the stack trace, never leak details to the client."""
+        """Unexpected exceptions: log the stack trace, never leak details to the client.
+
+        這個 handler 跑在所有 middleware 外層(Starlette 的 ServerErrorMiddleware),回應不會經過
+        RequestLoggingMiddleware,所以 X-Request-ID 在這裡補上,使用者回報 500 時才有 ID 可查。
+        """
         logger.exception(f"[Error] 500 unexpected error - path: {request.url.path}, error: {exc}")
-        return _error_response(status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error", ErrorCode.INTERNAL_ERROR)
+        request_id = get_request_id()
+        return _error_response(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "Internal server error",
+            ErrorCode.INTERNAL_ERROR,
+            headers={REQUEST_ID_HEADER: request_id} if request_id else None,
+        )

@@ -1,7 +1,8 @@
 .PHONY: help install update all format lint type-check test coverage clean audit secrets-scan sast
 .PHONY: up down build rebuild logs logs-app logs-db logs-redis db-up docker-clean
-.PHONY: prod-up prod-down prod-build prod-logs
+.PHONY: prod-up prod-down prod-build prod-logs prod-backup prod-migrate prod-deploy prod-llm-cost
 .PHONY: migrate makemigrations downgrade migration-history
+.PHONY: import-holidays nginx-check perf perf-seed llm-cost
 
 # Docker compose files
 # --env-file 讓 compose 變數替換(${DB_PASSWORD}、${REDIS_PASSWORD} 等)讀得到
@@ -31,15 +32,26 @@ help:
 	@echo ""
 	@echo "生產環境 (Docker):"
 	@echo "  make prod-build        - 建構生產映像"
-	@echo "  make prod-up           - 啟動生產容器"
+	@echo "  make prod-backup       - 備份生產 DB (pg_dump -Fc,留最近 14 份)"
+	@echo "  make prod-migrate      - 先備份,再用新映像套用 migration (在 prod-up 之前)"
+	@echo "  make prod-up           - 先備份,再啟動生產容器"
+	@echo "  make prod-deploy       - 備份 → build → migrate → up (CD 用這個)"
 	@echo "  make prod-down         - 停止生產容器"
 	@echo "  make prod-logs         - 查看生產日誌"
+	@echo "  make prod-llm-cost     - 生產環境每月 LLM 花費"
 	@echo ""
 	@echo "資料庫遷移 (Alembic, 在 app 容器內執行):"
 	@echo "  make migrate           - 套用所有遷移 (alembic upgrade head)"
 	@echo "  make makemigrations MSG=\"訊息\" - 自動產生遷移檔"
 	@echo "  make downgrade         - 回退一個遷移"
 	@echo "  make migration-history - 查看遷移歷史與目前版本"
+	@echo ""
+	@echo "營運 / 維運:"
+	@echo "  make import-holidays YEAR=2027 - 抓政府辦公日曆匯入假日 (會連外網,開發環境)"
+	@echo "  make llm-cost          - 開發環境每月 LLM 花費 (token 與美金,按模型)"
+	@echo "  make nginx-check       - 用 docker 跑 nginx -t 驗證 nginx/app.conf"
+	@echo "  make perf-seed         - 建立壓測帳號與 token (寫到 perf/.perf_users.json)"
+	@echo "  make perf [ARGS=...]   - Locust 壓測 (預設開 web UI: http://localhost:8089)"
 	@echo ""
 	@echo "程式碼品質:"
 	@echo "  make all               - 執行所有檢查 (format + lint + type-check + test)"
@@ -122,17 +134,47 @@ docker-clean:
 prod-build:
 	$(COMPOSE_PROD) build
 
-prod-up:
+# migration 沒有回頭路,所以 prod-migrate / prod-up 前一律先備份;備份失敗就中止。
+# 用 pg_dump 自訂格式(-Fc,已壓縮)而不是 "pg_dump | gzip":make 的 sh 沒有 pipefail,
+# pg_dump 失敗時 gzip 仍會成功,留下一個看起來正常的空備份。先寫 .partial 再改名也是同樣的考量。
+# 傾印檔是未加密的完整資料庫:umask 077 只有擁有者可讀。db 沒在跑(首次部署)就略過。
+# 這是同一台機器上的備份(磁碟壞掉一樣會掉);異地備份由 compose 的 backup 服務每日上傳 S3。
+PROD_BACKUP_DIR ?= $(HOME)/backups/$(notdir $(CURDIR))
+PROD_BACKUP_KEEP ?= 14
+prod-backup:
+	@if [ -z "$$($(COMPOSE_PROD) ps -q db 2>/dev/null)" ]; then \
+		echo "db 沒有在執行(首次部署?),略過備份"; \
+	else \
+		mkdir -p $(PROD_BACKUP_DIR) && chmod 700 $(PROD_BACKUP_DIR); \
+		umask 077 && $(COMPOSE_PROD) exec -T db sh -c 'pg_dump -Fc -U "$$POSTGRES_USER" "$$POSTGRES_DB"' > $(PROD_BACKUP_DIR)/.partial \
+			|| { rm -f $(PROD_BACKUP_DIR)/.partial; echo "資料庫備份失敗,中止"; exit 1; }; \
+		f=$(PROD_BACKUP_DIR)/$$(date +%Y%m%d-%H%M%S).dump; mv $(PROD_BACKUP_DIR)/.partial $$f; \
+		ls -1t $(PROD_BACKUP_DIR)/*.dump | tail -n +$$(($(PROD_BACKUP_KEEP) + 1)) | xargs -r rm --; \
+		echo "備份完成:$$f"; \
+	fi
+
+# 用剛 build 好的新映像、一次性容器跑 migration;舊的 app 容器照常服務。
+# 一定要在 prod-up 之前,且 migration 必須 expand-safe(見 docs/database-migrations.md)。
+prod-migrate: prod-backup
+	$(COMPOSE_PROD) run --rm -T app alembic upgrade head
+
+prod-up: prod-backup
 	$(COMPOSE_PROD) up -d
 	@echo ""
 	@echo "生產環境已啟動！"
-	@echo "  API: http://localhost:8000"
+	@echo "  API: http://127.0.0.1:$${APP_PORT:-8000} (經 host nginx 對外)"
+
+# 同一次 make 內 prod-backup 只會跑一次:順序是 備份 → build → migrate → up
+prod-deploy: prod-backup prod-build prod-migrate prod-up
 
 prod-down:
 	$(COMPOSE_PROD) down
 
 prod-logs:
 	$(COMPOSE_PROD) logs -f
+
+prod-llm-cost:
+	$(COMPOSE_PROD) exec -T db sh -c 'psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -c "$(LLM_COST_SQL)"'
 
 # ===================
 # Database Migrations (Alembic, 在 app 容器內執行)
@@ -156,6 +198,47 @@ migration-history: up
 	$(COMPOSE_DEV) exec app uv run alembic history
 	@echo ""
 	$(COMPOSE_DEV) exec app uv run alembic current
+
+# ===================
+# 營運 / 維運
+# ===================
+
+import-holidays: up
+ifndef YEAR
+	$(error 請提供西元年: make import-holidays YEAR=2027)
+endif
+	$(COMPOSE_DEV) exec -T app python -m scripts.import_holidays $(YEAR)
+
+# 每月 LLM 花費(台北月份 × 模型,含小計);單價見 app/llm/utils.py 的 PRICES
+LLM_COST_SQL = SELECT t.month, coalesce(t.model, '合計') AS model, count(*) AS calls, \
+	sum(t.input_tokens) AS input_tokens, sum(t.cached_tokens) AS cached_tokens, \
+	sum(t.output_tokens) AS output_tokens, round(sum(t.cost_usd), 2) AS usd \
+	FROM (SELECT *, to_char(created_at AT TIME ZONE 'Asia/Taipei', 'YYYY-MM') AS month FROM llm_usage) t \
+	GROUP BY GROUPING SETS ((t.month, t.model), (t.month)) ORDER BY t.month DESC, GROUPING(t.model), t.model;
+
+llm-cost:
+	$(COMPOSE_DEV) exec -T db sh -c 'psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -c "$(LLM_COST_SQL)"'
+
+# 用 docker 跑 nginx -t;站台設定引用的憑證在本機/CI 不存在,先產生自簽憑證頂替。
+# NGINX_IMAGE 請對齊正式機的 nginx 大版本。
+NGINX_IMAGE ?= nginx:1.27-alpine
+nginx-check:
+	@docker run --rm -i $(NGINX_IMAGE) sh -c '\
+		set -e; cat > /etc/nginx/conf.d/default.conf; \
+		apk add --no-cache openssl >/dev/null; mkdir -p /etc/ssl/app; \
+		openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=example.com" \
+			-keyout /etc/ssl/app/privkey.pem -out /etc/ssl/app/fullchain.pem >/dev/null 2>&1; \
+		nginx -t' < nginx/app.conf
+
+# 壓測(手動、定期跑,不進 CI)。Locust 不是專案依賴,用 uvx 跑。
+PERF_HOST ?= http://localhost:8000
+PERF_USERS ?= 20
+perf-seed: up
+	$(COMPOSE_DEV) exec -T app python -m scripts.seed_perf $(PERF_USERS) > perf/.perf_users.json
+	@echo "已建立 $(PERF_USERS) 個壓測帳號 → perf/.perf_users.json(含 token,勿 commit)"
+
+perf:
+	uvx locust -f perf/locustfile.py --host $(PERF_HOST) $(ARGS)
 
 # ===================
 # Code Quality

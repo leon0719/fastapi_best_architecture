@@ -10,9 +10,10 @@ permissions:
   contents: read
 
 # 同一個 ref 有新 push 時取消舊的 run,省 runner。
+# 只取消 PR 的 run:main 上的 run 可能正在部署,取消會留下半完成的部署。
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   quality:
@@ -194,6 +195,7 @@ jobs:
             -e ADMIN_PASSWORD="ci-smoke-only-password" \
             -e DB_PASSWORD="ci-smoke-only-db-password" \
             -e REDIS_PASSWORD="ci-smoke-only-redis-password" \
+            -e CORS_ORIGINS="https://app.example.com" \
             app:ci
           for i in $(seq 1 30); do
             if curl -fsS http://localhost:8000/health/live; then
@@ -213,3 +215,65 @@ jobs:
       - name: Cleanup
         if: always()
         run: docker rm -f smoke || true
+
+  # nginx 站台設定的語法檢查(與 make nginx-check 相同);主機上的套用需要 sudo,由人執行。
+  nginx:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: nginx -t
+        run: make nginx-check
+
+  # CD:CI 全過、push 到預設分支才跑。模板預設不部署:到 repo 的 Settings → Variables 設
+  # DEPLOY_ENABLED=true 才啟用,並設好下列 secrets / variables(見 docs/deployment.md):
+  #   secrets.DEPLOY_HOST / DEPLOY_USER / DEPLOY_SSH_KEY / DEPLOY_HOST_FINGERPRINT(主機 SSH 指紋,防中間人)
+  #   vars.DEPLOY_PATH(主機上的 repo 路徑)、vars.DEPLOY_APP_PORT(預設 8000)
+  deploy:
+    needs: [quality, tests-integration, audit, sast, secrets, docker, nginx]
+    if: >-
+      github.event_name == 'push'
+      && github.ref_name == github.event.repository.default_branch
+      && vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    # 同時只跑一個部署,且不取消進行中的部署(避免兩個 job 同時 git pull + up 互相打架)
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    environment: production
+    steps:
+      - name: SSH, pull and deploy
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+          APP_PORT: ${{ vars.DEPLOY_APP_PORT || '8000' }}
+          BRANCH: ${{ github.ref_name }}
+          HEALTH_RETRIES: "30"
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          fingerprint: ${{ secrets.DEPLOY_HOST_FINGERPRINT }}
+          envs: DEPLOY_PATH,APP_PORT,BRANCH,HEALTH_RETRIES
+          script_stop: true
+          command_timeout: 30m
+          script: |
+            set -eu
+            cd "$DEPLOY_PATH"
+            git fetch origin "$BRANCH"
+            git checkout "$BRANCH"
+            git pull --ff-only origin "$BRANCH"
+            # 備份 → build → migrate → up(prod-deploy 內 prod-backup 只跑一次,失敗就中止)
+            make prod-deploy
+
+            # 輪詢 readiness(DB + Redis 都通才算),最多 HEALTH_RETRIES 次 × 5 秒
+            for i in $(seq 1 "$HEALTH_RETRIES"); do
+              if curl -fsS "http://127.0.0.1:${APP_PORT}/health/ready" > /dev/null; then
+                echo "deploy OK (attempt $i)"
+                exit 0
+              fi
+              sleep 5
+            done
+            echo "health check FAILED — app logs:"
+            docker logs --tail 100 fastapi-best-architecture
+            exit 1

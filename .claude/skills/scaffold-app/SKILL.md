@@ -129,12 +129,16 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import current_user, require_role
 from app.common.db.database import get_db
 from app.common.schemas import BaseResponse
 from app.products.schemas import ProductCreate, ProductRead
 from app.products.services import ProductService
+from app.users.models import Role, User
 
-router = APIRouter(prefix="/products", tags=["products"])  # kebab-case plural noun
+# kebab-case plural noun; every endpoint needs login (current_user), writes need a role
+router = APIRouter(prefix="/products", tags=["products"], dependencies=[Depends(current_user)])
+require_admin = require_role(Role.ADMIN)
 
 
 def get_product_service(db: Annotated[Session, Depends(get_db)]) -> ProductService:
@@ -153,12 +157,16 @@ def list_products(
 
 
 @router.post("", response_model=BaseResponse[ProductRead], status_code=201)
-def create_product(product: ProductCreate, service: Annotated[ProductService, Depends(get_product_service)]):
+def create_product(
+    product: ProductCreate,
+    service: Annotated[ProductService, Depends(get_product_service)],
+    admin: Annotated[User, Depends(require_admin)],
+):
     """Create a product."""
-    return BaseResponse(data=service.create_product(product))
+    return BaseResponse(data=service.create_product(product, actor=f"user:{admin.id}"))
 
 
-@router.delete("/{product_id}", response_model=BaseResponse[None])
+@router.delete("/{product_id}", response_model=BaseResponse[None], dependencies=[Depends(require_admin)])
 def delete_product(product_id: int, service: Annotated[ProductService, Depends(get_product_service)]):
     """Delete a product."""
     service.delete_product(product_id)
@@ -168,22 +176,25 @@ def delete_product(product_id: int, service: Annotated[ProductService, Depends(g
 - Import `get_db` from `app.common.db.database`; **never redefine it in views**.
 - IDs are path params (`/{product_id}`); query params are for dynamic filters only.
 - Views have no try/except and no hand-built error responses — raise and let `error_handler.py` convert.
+- Auth: decide per endpoint (`current_user` / `require_role`, see `docs/auth.md`). Per-user data is filtered in the
+  service (`owner_id == user.id`); another user's row is 404, not 403.
+- Writes whose history matters call `record_audit(...)` in the service before `commit` (see `docs/audit.md`).
+- File downloads return `file_response(...)` / `table_export_response(...)` (`docs/storage-and-exports.md`), not BaseResponse.
 
 **Gate**: `app/products/tests/test_views.py` (follow `app/users/tests/test_views.py`, using the `client`
-fixture). Assert the **status code and `BaseResponse` body** of every endpoint; after a write, read it
-back through the API; cover 404, 409, 422.
+fixture, plus `make_user(role)` / `admin_headers` for protected endpoints). Assert the **status code and
+`BaseResponse` body** of every endpoint; after a write, read it back through the API; cover 401, 403, 404, 409, 422.
 
 ### 5. Admin (`admin.py`)
 
 ```python
 """Admin view for Product model."""
 
-from sqladmin import ModelView
-
+from app.audit.admin import AdminAuditMixin
 from app.products.models import Product
 
 
-class ProductAdmin(ModelView, model=Product):
+class ProductAdmin(AdminAuditMixin, model=Product):  # back-office create/update/delete → audit_logs
     """Admin view for managing products."""
 
     name = "Product"
@@ -220,11 +231,13 @@ logs, and failures converted to `ExternalAPIException`:
 import httpx
 from loguru import logger
 
+from app.common.core.retry import retry_external
 from app.common.exceptions import ExternalAPIException
 
 _TIMEOUT = httpx.Timeout(10.0)
 
 
+@retry_external("Pricing", retry_on=(httpx.TransportError,))  # network errors retried; final failure → 502
 def fetch_price(sku: str) -> dict:
     """Fetch the current price from the pricing service."""
     url = f"https://pricing.example.com/skus/{sku}"
@@ -232,7 +245,7 @@ def fetch_price(sku: str) -> dict:
     try:
         resp = httpx.get(url, timeout=_TIMEOUT)
         resp.raise_for_status()
-    except httpx.HTTPError as e:
+    except httpx.HTTPStatusError as e:
         logger.exception(f"[External] API call failed - endpoint: {url}, error: {e}")
         raise ExternalAPIException("Pricing service unavailable") from e
     return resp.json()
@@ -250,7 +263,7 @@ Report each item in one of three states; never tick something you did not run:
 - [ ] Model added to `alembic/env.py`
 - [ ] Router added with `include_router`; admin added with `add_view`
 - [ ] Service tests pass (before writing views)
-- [ ] Endpoint tests pass, including 404 / 409 / 422 and the `BaseResponse` body
+- [ ] Endpoint tests pass, including 401 / 403 / 404 / 409 / 422 and the `BaseResponse` body
 - [ ] No unused empty files created
 - [ ] The **check** skill passes
 
