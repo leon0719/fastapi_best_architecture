@@ -1,8 +1,11 @@
 """Chatbot business logic services."""
 
+from typing import Any
+
 from loguru import logger
 from sqlalchemy.orm import Session
 
+from app.audit.services import record_audit, snapshot
 from app.chatbots.models import Chatbot
 from app.chatbots.schemas import ChatbotCreate, ChatbotUpdate
 from app.common.exceptions import ConflictException, ErrorCode, NotFoundException
@@ -27,7 +30,7 @@ class ChatbotService:
             raise NotFoundException(f"Chatbot with id {chatbot_id} not found")
         return chatbot
 
-    def create_chatbot(self, data: ChatbotCreate) -> Chatbot:
+    def create_chatbot(self, data: ChatbotCreate, actor: str | None = None) -> Chatbot:
         logger.info(f"[Service] Creating chatbot - name: {data.name}")
         existing = self.db.query(Chatbot).filter(Chatbot.name == data.name).first()
         if existing:
@@ -42,12 +45,15 @@ class ChatbotService:
             is_active=data.is_active,
         )
         self.db.add(chatbot)
+        self.db.flush()  # 取得 id 給稽核紀錄;稽核與資料在同一個交易 commit
+        self._audit("create", chatbot, after=snapshot(chatbot), actor=actor)
         self.db.commit()
         self.db.refresh(chatbot)
         return chatbot
 
-    def update_chatbot(self, chatbot_id: int, data: ChatbotUpdate) -> Chatbot:
+    def update_chatbot(self, chatbot_id: int, data: ChatbotUpdate, actor: str | None = None) -> Chatbot:
         chatbot = self.get_chatbot(chatbot_id)
+        before = snapshot(chatbot)
         if data.name is not None:
             existing = self.db.query(Chatbot).filter(Chatbot.name == data.name, Chatbot.id != chatbot_id).first()
             if existing:
@@ -61,11 +67,18 @@ class ChatbotService:
             chatbot.system_prompt = data.system_prompt
         if data.is_active is not None:
             chatbot.is_active = data.is_active
+        self._audit("update", chatbot, before=before, after=snapshot(chatbot), actor=actor)
         self.db.commit()
         return chatbot
 
-    def delete_chatbot(self, chatbot_id: int) -> bool:
+    def delete_chatbot(self, chatbot_id: int, actor: str | None = None) -> bool:
         chatbot = self.get_chatbot(chatbot_id)
+        self._audit("delete", chatbot, before=snapshot(chatbot), actor=actor)
         self.db.delete(chatbot)
         self.db.commit()
         return True
+
+    def _audit(self, action: str, chatbot: Chatbot, **kwargs: Any) -> None:
+        record_audit(
+            self.db, action=action, target_type="Chatbot", target_id=chatbot.id, target_label=chatbot.name, **kwargs
+        )
