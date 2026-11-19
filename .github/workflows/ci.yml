@@ -176,7 +176,9 @@ jobs:
 
       # 只擋「有修法可套用」的 CRITICAL,避免上游還沒修的 CVE 卡死所有建置。
       - name: Trivy image scan
-        uses: aquasecurity/trivy-action@0.28.0
+        # Pinned by commit SHA, not tag: upstream has deleted/retagged release tags
+        # before (the old 0.28.0 pin now fails with "unable to find version").
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: app:ci
           format: table
