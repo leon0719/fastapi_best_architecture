@@ -9,7 +9,7 @@ x-logging: &default-logging
 
 services:
   db:
-    image: postgres:16-alpine
+    image: postgres:19-alpine
     container_name: fastapi-postgres
     environment:
       POSTGRES_USER: ${DB_USER}
