@@ -1,3 +1,4 @@
+.PHONY: pre-commit-install pre-commit
 .PHONY: help install update all format lint type-check test coverage clean audit secrets-scan sast
 .PHONY: up down build rebuild logs logs-app logs-db logs-redis db-up docker-clean
 .PHONY: prod-up prod-down prod-build prod-logs prod-backup prod-migrate prod-deploy prod-llm-cost
@@ -68,6 +69,8 @@ help:
 	@echo ""
 	@echo "其他:"
 	@echo "  make install           - 安裝本地依賴"
+	@echo "  make pre-commit-install - 安裝 git pre-commit hook (commit 時自動跑 ruff/mypy/gitleaks)"
+	@echo "  make pre-commit        - 對所有檔案跑一次 pre-commit hook"
 	@echo "  make update            - 更新所有套件至最新版本"
 	@echo "  make clean             - 清理快取檔案"
 	@echo "  make docker-clean      - 停止並清理開發環境 Docker 資料卷"
@@ -78,6 +81,13 @@ help:
 
 install:
 	uv sync
+
+# pre-commit 不在 dev 依賴裡，用 uvx 臨時跑
+pre-commit-install:
+	uvx pre-commit install
+
+pre-commit:
+	uvx pre-commit run --all-files
 
 update:
 	@echo "Updating all packages..."
